@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <!-- Meta de base -->
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover" />
+    <meta name="theme-color" content="#2196F3" />
+    <meta name="description" content="Plateforme de gestion comptable OHADA avec archivage par client" />
+    <meta name="keywords" content="comptabilité, archivage, documents, OHADA, VPNS" />
+    <meta name="author" content="VPNS Consulting" />
+    
+    <!-- PWA et manifeste -->
+    <link rel="manifest" href="/manifest.json" />
+    <link rel="icon" type="image/svg+xml" href="/icons/icon-192x192.svg" />
+    <link rel="apple-touch-icon" href="/icons/icon-192x192.svg" />
+    
+    <!-- Sécurité -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:;" />
+    <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+    <meta name="X-UA-Compatible" content="IE=edge" />
+    
+    <!-- Couleurs et branding -->
+    <meta name="msapplication-TileColor" content="#2196F3" />
+    <meta name="msapplication-tap-highlight" content="no" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="VPNS" />
+    
+    <!-- Open Graph pour partage -->
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="VPNS Consulting - Gestion Comptable" />
+    <meta property="og:description" content="Plateforme de gestion comptable OHADA avec archivage par client" />
+    <meta property="og:image" content="/icons/icon-512x512.svg" />
+    
+    <!-- Page titre -->
+    <title>VPNS Consulting - Gestion Comptable</title>
+    
+    <!-- Preconnect pour performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://supabase.com" />
+    
+    <!-- Styles optimisés pour mobile -->
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+        width: 100%;
+        height: 100%;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+          'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+        background: #f5f5f5;
+      }
+      #root {
+        width: 100%;
+        height: 100%;
+      }
+      * {
+        box-sizing: border-box;
+      }
+    </style>
+  </head>
+  <body>
+    <!-- App root -->
+    <div id="root"></div>
+    
+    <!-- Scripts -->
+    <script type="module" src="/src/main.tsx"></script>
+    
+    <!-- PWA Service Worker -->
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.ts').catch(err => {
+            console.warn('Service Worker registration failed:', err);
+          });
+        });
+      }
+    </script>
+  </body>
+</html>

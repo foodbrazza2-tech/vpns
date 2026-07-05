@@ -1,0 +1,195 @@
+import React, { useState } from 'react';
+import PrimaryButton from './PrimaryButton';
+
+interface InvoiceData {
+  invoiceNumber: string;
+  clientId: string;
+  date: string;
+  dueDate: string;
+  amount: number;
+  description: string;
+  status: 'draft' | 'sent' | 'paid' | 'overdue';
+}
+
+interface InvoiceModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onSubmit: (data: InvoiceData) => void;
+  clients?: Array<{ id: string; name: string }>;
+}
+
+export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [] }: InvoiceModalProps) {
+  const [invoiceNumber, setInvoiceNumber] = useState('');
+  const [clientId, setClientId] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [dueDate, setDueDate] = useState('');
+  const [amount, setAmount] = useState('');
+  const [description, setDescription] = useState('');
+  const [status, setStatus] = useState<'draft' | 'sent' | 'paid' | 'overdue'>('draft');
+  const [errors, setErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const validate = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!invoiceNumber.trim()) newErrors.invoiceNumber = 'Numéro de facture requis';
+    if (!clientId) newErrors.clientId = 'Client requis';
+    if (!date) newErrors.date = 'Date requise';
+    if (!dueDate) newErrors.dueDate = 'Date d\'échéance requise';
+    if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
+      newErrors.amount = 'Montant valide requis';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!validate()) return;
+
+    setIsSubmitting(true);
+    try {
+      onSubmit({
+        invoiceNumber,
+        clientId,
+        date,
+        dueDate,
+        amount: parseFloat(amount),
+        description,
+        status,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Gestion des factures</p>
+            <h3>Créer une nouvelle facture</h3>
+          </div>
+          <button type="button" className="modal-close" onClick={onClose}>×</button>
+        </div>
+
+        <form onSubmit={handleSubmit}>
+          <div className="modal-body">
+            
+            {/* Invoice Number */}
+            <label>
+              Numéro de facture *
+              <input
+                type="text"
+                value={invoiceNumber}
+                onChange={(e) => setInvoiceNumber(e.target.value)}
+                placeholder="Ex: FAC-2026-001"
+                disabled={isSubmitting}
+              />
+              {errors.invoiceNumber && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.invoiceNumber}</span>}
+            </label>
+
+            {/* Client Selection */}
+            <label>
+              Client *
+              <select 
+                value={clientId} 
+                onChange={(e) => setClientId(e.target.value)}
+                disabled={isSubmitting}
+              >
+                <option value="">-- Sélectionner un client --</option>
+                {clients.map((client) => (
+                  <option key={client.id} value={client.id}>
+                    {client.name}
+                  </option>
+                ))}
+              </select>
+              {errors.clientId && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.clientId}</span>}
+            </label>
+
+            {/* Dates */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <label>
+                Date de facture *
+                <input
+                  type="date"
+                  value={date}
+                  onChange={(e) => setDate(e.target.value)}
+                  disabled={isSubmitting}
+                />
+                {errors.date && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.date}</span>}
+              </label>
+
+              <label>
+                Date d'échéance *
+                <input
+                  type="date"
+                  value={dueDate}
+                  onChange={(e) => setDueDate(e.target.value)}
+                  disabled={isSubmitting}
+                />
+                {errors.dueDate && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.dueDate}</span>}
+              </label>
+            </div>
+
+            {/* Amount */}
+            <label>
+              Montant total (FCFA) *
+              <input
+                type="number"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="Ex: 100000"
+                disabled={isSubmitting}
+                step="100"
+              />
+              {errors.amount && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.amount}</span>}
+            </label>
+
+            {/* Status */}
+            <label>
+              Statut
+              <select 
+                value={status} 
+                onChange={(e) => setStatus(e.target.value as 'draft' | 'sent' | 'paid' | 'overdue')}
+                disabled={isSubmitting}
+              >
+                <option value="draft">Brouillon</option>
+                <option value="sent">Envoyée</option>
+                <option value="paid">Payée</option>
+                <option value="overdue">Impayée</option>
+              </select>
+            </label>
+
+            {/* Description */}
+            <label>
+              Observations
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Notes supplémentaires, conditions de paiement, etc."
+                style={{ minHeight: '80px' }}
+                disabled={isSubmitting}
+              />
+            </label>
+
+            {/* Actions */}
+            <div className="modal-actions">
+              <button type="button" className="secondary-btn" onClick={onClose} disabled={isSubmitting}>
+                Annuler
+              </button>
+              <PrimaryButton type="submit" disabled={isSubmitting}>
+                {isSubmitting ? 'Création...' : 'Créer la facture'}
+              </PrimaryButton>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
