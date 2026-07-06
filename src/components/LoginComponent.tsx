@@ -7,13 +7,19 @@ interface LoginProps {
 }
 
 export function LoginComponent({ onLoginSuccess }: LoginProps) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
+  const [email, setEmail] = useState(AuthService.getAllowedEmail());
+  const [password, setPassword] = useState('Vpns2025');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
 
   const validateInputs = (): boolean => {
+    if (email.trim().toLowerCase() !== AuthService.getAllowedEmail()) {
+      setError('Seul l identifiant autorise peut se connecter');
+      SecurityService.logAudit('login_blocked_email', 'failure', { email });
+      return false;
+    }
+
     if (!SecurityService.isValidEmail(email)) {
       setError('Email invalide');
       SecurityService.logAudit('login_invalid_email', 'failure', { email });
@@ -60,6 +66,7 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
       <div style={styles.card}>
         <h1 style={styles.title}>🔐 Connexion</h1>
         <p style={styles.subtitle}>VPNS Consulting</p>
+        <p style={styles.helper}>Identifiant autorise: edson@gmail.com</p>
 
         {error && <div style={styles.error}>{error}</div>}
 
@@ -70,9 +77,10 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="vous@exemple.com"
+              placeholder="edson@gmail.com"
               disabled={loading}
               style={styles.input}
+              readOnly
               required
             />
           </div>
@@ -143,8 +151,14 @@ const styles: Record<string, React.CSSProperties> = {
   subtitle: {
     textAlign: 'center',
     color: '#666',
-    marginBottom: '24px',
+    marginBottom: '8px',
     fontSize: '14px',
+  },
+  helper: {
+    textAlign: 'center',
+    color: '#4b5563',
+    marginBottom: '24px',
+    fontSize: '13px',
   },
   error: {
     backgroundColor: '#fee',
