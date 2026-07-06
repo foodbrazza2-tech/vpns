@@ -1,14 +1,9 @@
 import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
-import compression from '@vitejs/plugin-compression';
 
 export default defineConfig({
   plugins: [
     react(),
-    compression({
-      algorithm: 'gzip',
-      ext: '.gz',
-    }),
   ],
   server: {
     port: 5173,

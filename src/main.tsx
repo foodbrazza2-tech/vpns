@@ -6,7 +6,7 @@ import './styles.css';
 // Initialise la PWA et les logs
 const initApp = async () => {
   // Enregistre le manifest pour PWA
-  const link = document.querySelector('link[rel="manifest"]') || document.createElement('link');
+  const link = (document.querySelector('link[rel="manifest"]') as HTMLLinkElement | null) || document.createElement('link');
   link.rel = 'manifest';
   link.href = '/manifest.json';
   if (!document.querySelector('link[rel="manifest"]')) {
@@ -14,7 +14,7 @@ const initApp = async () => {
   }
 
   // Ajoute les viewport meta tags pour mobile
-  const viewport = document.querySelector('meta[name="viewport"]') || document.createElement('meta');
+  const viewport = (document.querySelector('meta[name="viewport"]') as HTMLMetaElement | null) || document.createElement('meta');
   viewport.name = 'viewport';
   viewport.content = 'width=device-width, initial-scale=1, maximum-scale=5, viewport-fit=cover';
   if (!document.querySelector('meta[name="viewport"]')) {
