@@ -23,6 +23,7 @@ export function ArchiveManager({ clients }: ArchiveManagerProps) {
   const [isUploading, setIsUploading] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>('');
+  const [newClientName, setNewClientName] = useState('');
 
   const categories = ['Facture', 'Devis', 'Reçu', 'Contrat', 'Rapport', 'Justificatif', 'Autre'];
 
@@ -94,6 +95,37 @@ export function ArchiveManager({ clients }: ArchiveManagerProps) {
 
     loadDocuments();
   }, [selectedClient]);
+
+  const createClientId = (name: string): string => {
+    return name
+      .toLowerCase()
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/[^a-z0-9-]/g, '')
+      .concat(`-${Date.now().toString(36)}`);
+  };
+
+  const handleCreateArchive = async () => {
+    const normalizedName = newClientName.trim();
+    if (!normalizedName) {
+      setError('Le nom client est requis');
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      setError('');
+      const archive = await ArchiveApiClient.createArchive(createClientId(normalizedName), normalizedName);
+      const refreshed = await ArchiveApiClient.getArchives();
+      setArchives(refreshed);
+      setSelectedClient(archive.clientId);
+      setNewClientName('');
+    } catch (err) {
+      setError((err as Error).message || 'Impossible de creer ce client');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
@@ -175,6 +207,16 @@ export function ArchiveManager({ clients }: ArchiveManagerProps) {
 
       <div className="archive-upload-card">
         <div className="archive-form">
+          <input
+            type="text"
+            value={newClientName}
+            onChange={(event) => setNewClientName(event.target.value)}
+            placeholder="Nom du client a archiver"
+          />
+          <button type="button" className="archive-file-label" onClick={handleCreateArchive} disabled={isLoading}>
+            + Creer dossier client
+          </button>
+
           <select value={selectedClient} onChange={(event) => setSelectedClient(event.target.value)}>
             <option value="">-- Sélectionner un client --</option>
             {archives.map((archive) => (
