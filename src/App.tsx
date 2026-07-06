@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import PageHeader from './components/PageHeader';
@@ -10,6 +10,9 @@ import { EventModal } from './components/EventModal';
 import { ReportModal } from './components/ReportModal';
 import { NotificationModal } from './components/NotificationModal';
 import { AccountingEntryModal } from './components/AccountingEntryModal';
+import { LoginComponent } from './components/LoginComponent';
+import AuthService from './services/authService';
+import { useMediaQuery } from './hooks/useMediaQuery';
 import { parseAppointmentText, parseQuickEntry } from './utils/helpers';
 
 type SectionKey = 'dashboard' | 'comptabilite' | 'factures' | 'clients' | 'agenda' | 'documents' | 'rapports' | 'notifications' | 'parametres';
@@ -56,14 +59,52 @@ const appointments: Array<{ time: string; title: string; client: string }> = [];
 const alerts: Array<{ title: string; detail: string }> = [];
 
 function App() {
+  const { isMobile } = useMediaQuery();
   const [activeSection, setActiveSection] = useState<SectionKey>('dashboard');
   const [quickText, setQuickText] = useState('');
   const [appointmentText, setAppointmentText] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [isAuthLoading, setIsAuthLoading] = useState(true);
 
   const parsedEntry = useMemo(() => parseQuickEntry(quickText), [quickText]);
   const parsedAppointment = useMemo(() => parseAppointmentText(appointmentText), [appointmentText]);
+
+  useEffect(() => {
+    AuthService.getSession().then((session) => {
+      setIsAuthenticated(Boolean(session));
+      setIsAuthLoading(false);
+    });
+
+    const subscription = AuthService.onAuthStateChange((user) => {
+      setIsAuthenticated(Boolean(user));
+      setIsAuthLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile) {
+      setIsDrawerOpen(false);
+    }
+  }, [isMobile]);
+
+  useEffect(() => {
+    document.body.style.overflow = isDrawerOpen || isModalOpen ? 'hidden' : 'auto';
+    return () => {
+      document.body.style.overflow = 'auto';
+    };
+  }, [isDrawerOpen, isModalOpen]);
+
+  if (isAuthLoading) {
+    return <div className="auth-loading">Chargement...</div>;
+  }
+
+  if (!isAuthenticated) {
+    return <LoginComponent onLoginSuccess={() => setIsAuthenticated(true)} />;
+  }
 
   const renderSection = () => {
     switch (activeSection) {
@@ -298,7 +339,7 @@ function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar activeSection={activeSection} onSelectSection={handleNavigate} />
+      {!isMobile && <Sidebar activeSection={activeSection} onSelectSection={handleNavigate} />}
 
       <div className="app-content">
         <TopBar
@@ -306,7 +347,6 @@ function App() {
           subtitle="VPNS Consulting - Logiciel professionnel OHADA"
           actionLabel={sectionActions[activeSection]}
           onAction={() => setIsModalOpen(true)}
-          onMenuToggle={() => setIsDrawerOpen(true)}
         />
 
         <main className="main-panel">
@@ -319,10 +359,23 @@ function App() {
         </main>
       </div>
 
-      <div className={`drawer-overlay ${isDrawerOpen ? 'open' : ''}`} onClick={() => setIsDrawerOpen(false)} />
-      <div className={`sidebar sidebar-mobile ${isDrawerOpen ? 'open' : ''}`}>
-        <Sidebar activeSection={activeSection} onSelectSection={handleNavigate} onClose={() => setIsDrawerOpen(false)} isMobile />
-      </div>
+      {isMobile && (
+        <>
+          <button
+            type="button"
+            className="floating-menu-toggle"
+            onClick={() => setIsDrawerOpen((current) => !current)}
+            aria-expanded={isDrawerOpen}
+            aria-controls="mobile-sidebar"
+          >
+            {isDrawerOpen ? 'Fermer' : 'Menu'}
+          </button>
+          <div className={`drawer-overlay ${isDrawerOpen ? 'open' : ''}`} onClick={() => setIsDrawerOpen(false)} />
+          <div id="mobile-sidebar" className={`sidebar sidebar-mobile ${isDrawerOpen ? 'open' : ''}`}>
+            <Sidebar activeSection={activeSection} onSelectSection={handleNavigate} onClose={() => setIsDrawerOpen(false)} isMobile />
+          </div>
+        </>
+      )}
 
       {isModalOpen && activeSection === 'comptabilite' && (
         <AccountingEntryModal

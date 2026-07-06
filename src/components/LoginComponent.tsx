@@ -65,7 +65,7 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
 
         <form onSubmit={handleLogin} style={styles.form}>
           <div style={styles.formGroup}>
-            <label style={styles.label}>Email</label>
+            <label style={styles.label}>Email / Identifiant</label>
             <input
               type="email"
               value={email}
@@ -111,10 +111,6 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
             {loading ? 'Connexion en cours...' : 'Se connecter'}
           </button>
         </form>
-
-        <p style={styles.footerText}>
-          Vous n'avez pas de compte ? <a href="/signup" style={styles.link}>Inscrivez-vous</a>
-        </p>
       </div>
     </div>
   );
@@ -203,16 +199,5 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: '16px',
     fontWeight: '600',
     marginTop: '8px',
-  },
-  footerText: {
-    textAlign: 'center',
-    fontSize: '14px',
-    color: '#666',
-    marginTop: '16px',
-  },
-  link: {
-    color: '#2196f3',
-    textDecoration: 'none',
-    fontWeight: '600',
   },
 };

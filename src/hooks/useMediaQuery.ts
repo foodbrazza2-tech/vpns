@@ -14,8 +14,8 @@ export function useMediaQuery(): ScreenSize {
     const height = typeof window !== 'undefined' ? window.innerHeight : 1024;
 
     return {
-      isMobile: width < 640,
-      isTablet: width >= 640 && width < 1024,
+      isMobile: width < 768,
+      isTablet: width >= 768 && width < 1024,
       isDesktop: width >= 1024,
       width,
       height,
@@ -28,8 +28,8 @@ export function useMediaQuery(): ScreenSize {
       const height = window.innerHeight;
 
       setScreenSize({
-        isMobile: width < 640,
-        isTablet: width >= 640 && width < 1024,
+        isMobile: width < 768,
+        isTablet: width >= 768 && width < 1024,
         isDesktop: width >= 1024,
         width,
         height,

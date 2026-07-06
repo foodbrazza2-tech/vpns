@@ -26,12 +26,19 @@ interface SidebarProps {
 export default function Sidebar({ activeSection, onSelectSection, onClose, isMobile = false }: SidebarProps) {
   return (
     <aside className={`sidebar ${isMobile ? 'sidebar-mobile' : ''}`.trim()}>
-      <div className="brand-block">
-        <div className="brand-mark">VP</div>
-        <div>
-          <h1>VPNS Consulting</h1>
-          <p>Comptabilité OHADA</p>
+      <div className="sidebar-head">
+        <div className="brand-block">
+          <div className="brand-mark">VP</div>
+          <div>
+            <h1>VPNS Consulting</h1>
+            <p>Comptabilité OHADA</p>
+          </div>
         </div>
+        {isMobile && (
+          <button type="button" className="sidebar-close" onClick={onClose} aria-label="Fermer le menu">
+            ×
+          </button>
+        )}
       </div>
 
       <nav className="nav-list">
