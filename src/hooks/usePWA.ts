@@ -24,7 +24,7 @@ export function usePWA() {
     const registerSW = async () => {
       if ('serviceWorker' in navigator) {
         try {
-          const registration = await navigator.serviceWorker.register('/sw.ts', {
+          const registration = await navigator.serviceWorker.register('/sw.js', {
             scope: '/',
           });
 
