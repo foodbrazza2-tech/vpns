@@ -1,9 +1,8 @@
 import { useState, useEffect, ChangeEvent } from 'react';
+import { ArchiveApiClient } from '../api/archiveApiClient';
 import {
   ClientArchive,
   ArchivedDocument,
-  createClientFolder,
-  addDocumentToArchive,
   formatFileSize,
   filterDocumentsByCategory,
   searchDocuments,
@@ -22,19 +21,81 @@ export function ArchiveManager({ clients }: ArchiveManagerProps) {
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [isUploading, setIsUploading] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string>('');
 
   const categories = ['Facture', 'Devis', 'Reçu', 'Contrat', 'Rapport', 'Justificatif', 'Autre'];
 
   useEffect(() => {
-    setArchives((prev) => {
-      return clients.map((client) => {
-        const existingArchive = prev.find((archive) => archive.clientName === client.name);
-        return existingArchive || createClientFolder(client.name);
-      });
-    });
-  }, [clients]);
+    const loadArchives = async () => {
+      try {
+        setIsLoading(true);
+        setError('');
+        const loadedArchives = await ArchiveApiClient.getArchives();
+        setArchives(loadedArchives);
+      } catch (err) {
+        setError((err as Error).message || 'Impossible de charger les archives');
+      } finally {
+        setIsLoading(false);
+      }
+    };
 
-  const handleFileUpload = (event: ChangeEvent<HTMLInputElement>) => {
+    loadArchives();
+  }, []);
+
+  useEffect(() => {
+    const syncClientArchives = async () => {
+      if (clients.length === 0) {
+        return;
+      }
+
+      const existingByName = new Set(archives.map((archive) => archive.clientName));
+      const missingClients = clients.filter((client) => !existingByName.has(client.name));
+
+      if (missingClients.length === 0) {
+        return;
+      }
+
+      try {
+        setIsLoading(true);
+        await Promise.all(
+          missingClients.map((client) => ArchiveApiClient.createArchive(client.id, client.name))
+        );
+        const refreshed = await ArchiveApiClient.getArchives();
+        setArchives(refreshed);
+      } catch (err) {
+        setError((err as Error).message || 'Impossible de synchroniser les archives clients');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    syncClientArchives();
+  }, [clients, archives]);
+
+  useEffect(() => {
+    const loadDocuments = async () => {
+      if (!selectedClient) {
+        setDocuments([]);
+        return;
+      }
+
+      try {
+        setIsLoading(true);
+        setError('');
+        const loadedDocs = await ArchiveApiClient.getClientDocuments(selectedClient);
+        setDocuments(loadedDocs);
+      } catch (err) {
+        setError((err as Error).message || 'Impossible de charger les documents');
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadDocuments();
+  }, [selectedClient]);
+
+  const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || !selectedClient) {
       window.alert('Veuillez sélectionner un client');
@@ -42,42 +103,32 @@ export function ArchiveManager({ clients }: ArchiveManagerProps) {
     }
 
     setIsUploading(true);
+    setError('');
     const totalFiles = files.length;
     let uploadedFiles = 0;
 
-    Array.from(files).forEach((file) => {
-      setTimeout(() => {
-        const newDocument = addDocumentToArchive(
-          selectedClient,
-          file.name,
-          file.size,
-          file.type || 'application/octet-stream',
-          'Autre'
-        );
-
-        setDocuments((prev) => [...prev, newDocument]);
-        setArchives((prev) =>
-          prev.map((archive) =>
-            archive.clientId === selectedClient
-              ? {
-                  ...archive,
-                  documentCount: archive.documentCount + 1,
-                  lastModified: new Date().toISOString(),
-                }
-              : archive
-          )
-        );
-
+    try {
+      for (const file of Array.from(files)) {
+        await ArchiveApiClient.uploadDocument(selectedClient, file, 'Autre');
         uploadedFiles += 1;
         setUploadProgress(Math.round((uploadedFiles / totalFiles) * 100));
+      }
 
-        if (uploadedFiles === totalFiles) {
-          setIsUploading(false);
-          setUploadProgress(0);
-          window.alert(`${totalFiles} document(s) archivé(s) avec succès !`);
-        }
-      }, 300);
-    });
+      const [updatedDocs, updatedArchives] = await Promise.all([
+        ArchiveApiClient.getClientDocuments(selectedClient),
+        ArchiveApiClient.getArchives(),
+      ]);
+
+      setDocuments(updatedDocs);
+      setArchives(updatedArchives);
+      window.alert(`${totalFiles} document(s) archive(s) avec succes`);
+    } catch (err) {
+      setError((err as Error).message || 'Echec upload');
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
+      event.target.value = '';
+    }
   };
 
   const filteredDocuments = (() => {
@@ -140,6 +191,8 @@ export function ArchiveManager({ clients }: ArchiveManagerProps) {
         </div>
 
         {isUploading && <div className="upload-box">Téléversement en cours… {uploadProgress}%</div>}
+        {isLoading && <div className="upload-box">Chargement des donnees...</div>}
+        {error && <div className="archive-empty">{error}</div>}
       </div>
 
       <div className="archive-section-card">
