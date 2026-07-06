@@ -24,6 +24,13 @@ export function usePWA() {
     const registerSW = async () => {
       if ('serviceWorker' in navigator) {
         try {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          await Promise.all(
+            registrations
+              .filter((registration) => registration.active?.scriptURL?.endsWith('/sw.ts'))
+              .map((registration) => registration.unregister())
+          );
+
           const registration = await navigator.serviceWorker.register('/sw.js', {
             scope: '/',
           });
