@@ -1,7 +1,10 @@
+const STATIC_CACHE = 'vpns-static-v2';
+const DYNAMIC_CACHE = 'vpns-dynamic-v2';
+
 self.addEventListener('install', (event) => {
-  const staticAssets = ['/', '/index.html', '/manifest.json'];
+  const staticAssets = ['/manifest.json'];
   event.waitUntil(
-    caches.open('vpns-static-v1').then((cache) => cache.addAll(staticAssets))
+    caches.open(STATIC_CACHE).then((cache) => cache.addAll(staticAssets))
   );
   self.skipWaiting();
 });
@@ -11,7 +14,7 @@ self.addEventListener('activate', (event) => {
     caches.keys().then((cacheNames) =>
       Promise.all(
         cacheNames.map((cacheName) => {
-          if (!['vpns-static-v1', 'vpns-dynamic-v1', 'vpns-consulting-v1'].includes(cacheName)) {
+          if (![STATIC_CACHE, DYNAMIC_CACHE].includes(cacheName)) {
             return caches.delete(cacheName);
           }
           return undefined;
@@ -30,7 +33,10 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  if (url.pathname.includes('/api/') || url.hostname !== self.location.hostname) {
+  // Navigation (the HTML shell) and API calls: always go to the network first so a
+  // fresh deploy is never masked by a stale cached page referencing removed asset
+  // files. Only fall back to the cache when truly offline.
+  if (request.mode === 'navigate' || url.pathname.includes('/api/') || url.hostname !== self.location.hostname) {
     event.respondWith(
       fetch(request)
         .then((response) => {
@@ -38,7 +44,11 @@ self.addEventListener('fetch', (event) => {
             throw new Error('Network response was not ok');
           }
 
-          caches.open('vpns-dynamic-v1').then((cache) => cache.put(request, response.clone()));
+          if (request.mode === 'navigate') {
+            caches.open(DYNAMIC_CACHE).then((cache) => cache.put(request, response.clone()));
+          } else {
+            caches.open(DYNAMIC_CACHE).then((cache) => cache.put(request, response.clone()));
+          }
           return response;
         })
         .catch(() => caches.match(request).then((response) => response || new Response('Offline', { status: 503 })))
@@ -46,6 +56,8 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Hashed static assets (JS/CSS/images) never change content for a given URL,
+  // so cache-first is safe and fast here.
   event.respondWith(
     caches.match(request).then((response) => {
       if (response) {
@@ -58,7 +70,7 @@ self.addEventListener('fetch', (event) => {
             return networkResponse;
           }
 
-          caches.open('vpns-dynamic-v1').then((cache) => cache.put(request, networkResponse.clone()));
+          caches.open(DYNAMIC_CACHE).then((cache) => cache.put(request, networkResponse.clone()));
           return networkResponse;
         })
         .catch(() => {
