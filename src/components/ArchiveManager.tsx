@@ -11,9 +11,18 @@ import {
 
 interface ArchiveManagerProps {
   clients: Array<{ id: string; name: string }>;
+  onNotify?: (message: string, type?: 'success' | 'info' | 'error') => void;
 }
 
-export function ArchiveManager({ clients }: ArchiveManagerProps) {
+export function ArchiveManager({ clients, onNotify }: ArchiveManagerProps) {
+  const notify = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
+    if (onNotify) {
+      onNotify(message, type);
+    } else {
+      window.alert(message);
+    }
+  };
+
   const [archives, setArchives] = useState<ClientArchive[]>([]);
   const [documents, setDocuments] = useState<ArchivedDocument[]>([]);
   const [selectedClient, setSelectedClient] = useState<string>('');
@@ -130,7 +139,7 @@ export function ArchiveManager({ clients }: ArchiveManagerProps) {
   const handleFileUpload = async (event: ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || !selectedClient) {
-      window.alert('Veuillez sélectionner un client');
+      notify('Veuillez selectionner un client avant d\'ajouter des fichiers.', 'error');
       return;
     }
 
@@ -153,7 +162,7 @@ export function ArchiveManager({ clients }: ArchiveManagerProps) {
 
       setDocuments(updatedDocs);
       setArchives(updatedArchives);
-      window.alert(`${totalFiles} document(s) archive(s) avec succes`);
+      notify(`${totalFiles} document(s) archive(s) avec succes.`);
     } catch (err) {
       setError((err as Error).message || 'Echec upload');
     } finally {

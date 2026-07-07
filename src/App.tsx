@@ -1,151 +1,406 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import Sidebar from './components/Sidebar';
 import TopBar from './components/TopBar';
 import PageHeader from './components/PageHeader';
 import EmptyState from './components/EmptyState';
 import { ArchiveManager } from './components/ArchiveManager';
-import { InvoiceModal } from './components/InvoiceModal';
-import { ClientModal } from './components/ClientModal';
-import { EventModal } from './components/EventModal';
-import { ReportModal } from './components/ReportModal';
-import { NotificationModal } from './components/NotificationModal';
-import { AccountingEntryModal } from './components/AccountingEntryModal';
+import { AccountingEntryModal, AccountingEntryData } from './components/AccountingEntryModal';
+import { ClientModal, ClientData } from './components/ClientModal';
+import { InvoiceModal, InvoiceData } from './components/InvoiceModal';
+import { EventModal, EventData } from './components/EventModal';
+import { ReportModal, ReportData } from './components/ReportModal';
+import { NotificationModal, NotificationData } from './components/NotificationModal';
 import { LoginComponent } from './components/LoginComponent';
+import NotificationToast from './components/NotificationToast';
 import AuthService from './services/authService';
-import { useMediaQuery } from './hooks/useMediaQuery';
-import { parseAppointmentText, parseQuickEntry } from './utils/helpers';
+import { parseAppointmentText, parseQuickEntry, parseInvoiceFromFile } from './utils/helpers';
+import { exportInvoiceToPdf, exportTableToPdf } from './utils/pdfExport';
 
 type SectionKey = 'dashboard' | 'comptabilite' | 'factures' | 'clients' | 'agenda' | 'documents' | 'rapports' | 'notifications' | 'parametres';
 
-type Entry = {
-  id: number;
-  date: string;
-  client: string;
-  description: string;
-  amount: number;
-  status: string;
-  category: string;
-  type: string;
-};
+type WithId<T> = T & { id: string; createdAt: string };
+
+type EntryRecord = WithId<AccountingEntryData>;
+type ClientRecord = WithId<ClientData>;
+type InvoiceRecord = WithId<InvoiceData>;
+type EventRecord = WithId<EventData>;
+type ReportRecord = WithId<ReportData>;
+type NotificationRecord = WithId<NotificationData>;
 
 const sectionLabels: Record<SectionKey, string> = {
   dashboard: 'Tableau de bord',
-  comptabilite: 'Comptabilité',
+  comptabilite: 'Comptabilite',
   factures: 'Factures',
   clients: 'Clients',
   agenda: 'Agenda',
   documents: 'Documents',
   rapports: 'Rapports',
   notifications: 'Notifications',
-  parametres: 'Paramètres',
+  parametres: 'Parametres',
 };
 
-const sectionActions: Record<SectionKey, string> = {
-  dashboard: '➕ Nouvelle écriture comptable',
-  comptabilite: '➕ Nouvelle écriture comptable',
-  factures: '➕ Nouvelle facture',
-  clients: '➕ Nouveau client',
-  agenda: '➕ Nouvel événement',
-  documents: '➕ Ajouter un document',
-  rapports: '➕ Nouveau rapport',
-  notifications: '➕ Nouvelle notification',
-  parametres: '➕ Nouvelle configuration',
+const sectionActions: Partial<Record<SectionKey, string>> = {
+  dashboard: 'Nouvelle ecriture comptable',
+  comptabilite: 'Nouvelle ecriture comptable',
+  factures: 'Nouvelle facture',
+  clients: 'Nouveau client',
+  agenda: 'Nouvel evenement',
+  rapports: 'Nouveau rapport',
+  notifications: 'Nouvelle notification',
 };
 
-const entries: Entry[] = [];
-const invoices: Array<{ ref: string; client: string; amount: string; status: string }> = [];
-const clientsData: Array<{ id: string; name: string }> = [];
-const appointments: Array<{ time: string; title: string; client: string }> = [];
-const alerts: Array<{ title: string; detail: string }> = [];
+const invoiceStatusLabels: Record<InvoiceData['status'], string> = {
+  draft: 'Brouillon',
+  sent: 'Envoyee',
+  paid: 'Payee',
+  overdue: 'Impayee',
+};
+
+const invoiceStatusColors: Record<InvoiceData['status'], string> = {
+  draft: 'neutral',
+  sent: 'blue',
+  paid: 'green',
+  overdue: 'red',
+};
+
+const notificationDotColors: Record<NotificationData['type'], string> = {
+  reminder: 'orange',
+  alert: 'red',
+  success: 'green',
+  info: 'blue',
+};
+
+const makeId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+const nowIso = () => new Date().toISOString();
+
+const formatFcfa = (value: number) => `${value.toLocaleString('fr-FR')} FCFA`;
+const formatDate = (value: string) => {
+  if (!value) return '-';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleDateString('fr-FR');
+};
+
+function MiniCalendar({ highlightDates }: { highlightDates: string[] }) {
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth();
+  const firstDay = new Date(year, month, 1);
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const startOffset = (firstDay.getDay() + 6) % 7; // lundi = 0
+  const cells: Array<number | null> = [...Array(startOffset).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
+  const highlightSet = new Set(
+    highlightDates
+      .map((d) => d.split('-').map(Number))
+      .filter(([y, m]) => y === year && m - 1 === month)
+      .map(([, , day]) => day)
+  );
+
+  return (
+    <div className="mini-cal">
+      {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((d, i) => (
+        <div className="cal-day-head" key={`${d}-${i}`}>{d}</div>
+      ))}
+      {cells.map((day, i) => (
+        <div
+          key={i}
+          className={`cal-day ${day === null ? 'empty' : ''} ${day === today.getDate() ? 'today' : ''} ${day && highlightSet.has(day) && day !== today.getDate() ? 'has-event' : ''}`.trim()}
+        >
+          {day || ''}
+        </div>
+      ))}
+    </div>
+  );
+}
 
 function App() {
-  const { isMobile } = useMediaQuery();
+  const [authChecked, setAuthChecked] = useState(false);
+  const [currentUser, setCurrentUser] = useState<{ name: string; email: string } | null>(null);
+
   const [activeSection, setActiveSection] = useState<SectionKey>('dashboard');
   const [quickText, setQuickText] = useState('');
   const [appointmentText, setAppointmentText] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [isAuthLoading, setIsAuthLoading] = useState(true);
+
+  const [entries, setEntries] = useState<EntryRecord[]>([]);
+  const [clientsList, setClientsList] = useState<ClientRecord[]>([]);
+  const [invoices, setInvoices] = useState<InvoiceRecord[]>([]);
+  const [events, setEvents] = useState<EventRecord[]>([]);
+  const [reports, setReports] = useState<ReportRecord[]>([]);
+  const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
+
+  const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: 'success' | 'info' | 'error' }>>([]);
+  const [invoiceInitialData, setInvoiceInitialData] = useState<Partial<InvoiceData> | undefined>(undefined);
+  const [invoiceModalKey, setInvoiceModalKey] = useState(0);
+  const [isImportingInvoice, setIsImportingInvoice] = useState(false);
 
   const parsedEntry = useMemo(() => parseQuickEntry(quickText), [quickText]);
   const parsedAppointment = useMemo(() => parseAppointmentText(appointmentText), [appointmentText]);
 
   useEffect(() => {
+    let active = true;
     AuthService.getSession().then((session) => {
-      setIsAuthenticated(Boolean(session));
-      setIsAuthLoading(false);
+      if (!active) return;
+      if (session?.user) {
+        setCurrentUser({
+          name: (session.user.user_metadata as { name?: string } | undefined)?.name || 'Edson',
+          email: session.user.email || AuthService.getAllowedEmail(),
+        });
+      }
+      setAuthChecked(true);
     });
-
-    const subscription = AuthService.onAuthStateChange((user) => {
-      setIsAuthenticated(Boolean(user));
-      setIsAuthLoading(false);
-    });
-
-    return () => subscription.unsubscribe();
+    return () => {
+      active = false;
+    };
   }, []);
 
-  useEffect(() => {
-    if (!isMobile) {
-      setIsDrawerOpen(false);
+  const clientsForSelect = useMemo(
+    () => clientsList.map((c) => ({ id: c.id, name: `${c.name} - ${c.company}` })),
+    [clientsList]
+  );
+
+  const findClientLabel = (clientId?: string) => {
+    if (!clientId) return 'Non specifie';
+    const match = clientsList.find((c) => c.id === clientId);
+    return match ? `${match.name} (${match.company})` : 'Client supprime';
+  };
+
+  const findClient = (clientId?: string) => clientsList.find((c) => c.id === clientId);
+
+  const pushToast = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
+    const id = makeId();
+    setToasts((prev) => [...prev, { id, message, type }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4500);
+  };
+
+  const openInvoiceModal = (initial?: Partial<InvoiceData>) => {
+    setInvoiceInitialData(initial);
+    setInvoiceModalKey((k) => k + 1);
+    setIsModalOpen(true);
+  };
+
+  const handleOpenCreateModal = () => {
+    if (activeSection === 'factures') {
+      openInvoiceModal(undefined);
+      return;
     }
-  }, [isMobile]);
+    setIsModalOpen(true);
+  };
 
-  useEffect(() => {
-    document.body.style.overflow = isDrawerOpen || isModalOpen ? 'hidden' : 'auto';
-    return () => {
-      document.body.style.overflow = 'auto';
-    };
-  }, [isDrawerOpen, isModalOpen]);
+  const handleImportInvoiceFile = async (file: File) => {
+    setIsImportingInvoice(true);
+    try {
+      const parsed = await parseInvoiceFromFile(file);
+      openInvoiceModal({
+        invoiceNumber: parsed.invoiceNumber,
+        amount: parsed.amount || undefined,
+        date: parsed.date,
+        dueDate: parsed.dueDate,
+        description: parsed.description,
+      });
+      pushToast(`Facture importee depuis "${file.name}". Verifiez les champs avant d'enregistrer.`, 'info');
+    } catch {
+      pushToast("Impossible d'analyser ce fichier automatiquement.", 'error');
+    } finally {
+      setIsImportingInvoice(false);
+    }
+  };
 
-  if (isAuthLoading) {
-    return <div className="auth-loading">Chargement...</div>;
-  }
+  const handleLoginSuccess = async () => {
+    const session = await AuthService.getSession();
+    setCurrentUser({
+      name: (session?.user?.user_metadata as { name?: string } | undefined)?.name || 'Edson',
+      email: session?.user?.email || AuthService.getAllowedEmail(),
+    });
+  };
 
-  if (!isAuthenticated) {
-    return <LoginComponent onLoginSuccess={() => setIsAuthenticated(true)} />;
-  }
+  const handleLogout = async () => {
+    await AuthService.signout();
+    setCurrentUser(null);
+  };
+
+  const handleAddEntry = (data: AccountingEntryData) => {
+    setEntries((prev) => [{ id: makeId(), createdAt: nowIso(), ...data }, ...prev]);
+    setIsModalOpen(false);
+    pushToast(`Ecriture "${data.description}" enregistree.`);
+  };
+
+  const handleAddClient = (data: ClientData) => {
+    setClientsList((prev) => [{ id: makeId(), createdAt: nowIso(), ...data }, ...prev]);
+    setIsModalOpen(false);
+    pushToast(`Client ${data.name} ajoute.`);
+  };
+
+  const handleAddInvoice = (data: InvoiceData) => {
+    setInvoices((prev) => [{ id: makeId(), createdAt: nowIso(), ...data }, ...prev]);
+    setIsModalOpen(false);
+    setInvoiceInitialData(undefined);
+    pushToast(`Facture ${data.invoiceNumber} creee.`);
+  };
+
+  const handleAddEvent = (data: EventData) => {
+    setEvents((prev) => [{ id: makeId(), createdAt: nowIso(), ...data }, ...prev]);
+    setIsModalOpen(false);
+    pushToast(`Evenement "${data.title}" planifie.`);
+  };
+
+  const handleAddReport = (data: ReportData) => {
+    setReports((prev) => [{ id: makeId(), createdAt: nowIso(), ...data }, ...prev]);
+    setIsModalOpen(false);
+    pushToast(`Rapport "${data.title}" genere.`);
+  };
+
+  const handleAddNotification = (data: NotificationData) => {
+    setNotifications((prev) => [{ id: makeId(), createdAt: nowIso(), ...data }, ...prev]);
+    setIsModalOpen(false);
+    pushToast(`Notification "${data.title}" programmee.`);
+  };
+
+  const totalDebit = entries.reduce((sum, e) => sum + e.debit, 0);
+  const totalCredit = entries.reduce((sum, e) => sum + e.credit, 0);
+  const totalInvoiced = invoices.reduce((sum, i) => sum + i.amount, 0);
+  const totalPaid = invoices.filter((i) => i.status === 'paid').reduce((sum, i) => sum + i.amount, 0);
+  const totalOverdue = invoices.filter((i) => i.status === 'overdue').length;
+
+  const categoryBreakdown = useMemo(() => {
+    const totals = new Map<string, number>();
+    entries.forEach((e) => {
+      const amount = e.debit + e.credit;
+      totals.set(e.category, (totals.get(e.category) || 0) + amount);
+    });
+    const grandTotal = Array.from(totals.values()).reduce((a, b) => a + b, 0);
+    return Array.from(totals.entries())
+      .map(([category, amount]) => ({ category, amount, pct: grandTotal ? Math.round((amount / grandTotal) * 100) : 0 }))
+      .sort((a, b) => b.amount - a.amount);
+  }, [entries]);
+
+  const systemNotifications = useMemo(() => {
+    const list: Array<{ id: string; title: string; message: string; date: string; tone: 'orange' | 'red' | 'blue' }> = [];
+    const now = new Date();
+
+    invoices.forEach((invoice) => {
+      if (invoice.status === 'paid' || !invoice.dueDate) return;
+      const due = new Date(invoice.dueDate);
+      if (Number.isNaN(due.getTime())) return;
+      const diffDays = Math.ceil((due.getTime() - now.getTime()) / 86400000);
+      if (diffDays < 0) {
+        list.push({
+          id: `inv-overdue-${invoice.id}`,
+          title: 'Facture en retard',
+          message: `${invoice.invoiceNumber} (${findClientLabel(invoice.clientId)}) - echeance depassee de ${Math.abs(diffDays)} jour(s)`,
+          date: invoice.dueDate,
+          tone: 'red',
+        });
+      } else if (diffDays <= 3) {
+        list.push({
+          id: `inv-duesoon-${invoice.id}`,
+          title: 'Echeance proche',
+          message: `${invoice.invoiceNumber} (${findClientLabel(invoice.clientId)}) arrive a echeance dans ${diffDays} jour(s)`,
+          date: invoice.dueDate,
+          tone: 'orange',
+        });
+      }
+    });
+
+    events.forEach((event) => {
+      const eventDate = new Date(`${event.date}T${event.time || '00:00'}`);
+      if (Number.isNaN(eventDate.getTime())) return;
+      const diffHours = (eventDate.getTime() - now.getTime()) / 3600000;
+      if (diffHours >= -1 && diffHours <= 24) {
+        list.push({
+          id: `event-soon-${event.id}`,
+          title: 'Evenement imminent',
+          message: `${event.title} - ${formatDate(event.date)} a ${event.time}`,
+          date: event.date,
+          tone: 'blue',
+        });
+      }
+    });
+
+    return list;
+  }, [invoices, events, clientsList]);
+
+  const totalActiveAlerts = notifications.length + systemNotifications.length;
 
   const renderSection = () => {
     switch (activeSection) {
       case 'comptabilite':
         return (
           <section className="section-stack">
+            <div className="skpi-row">
+              <div className="skpi-card">
+                <span className="skpi-icon" style={{ background: 'rgba(16,185,129,0.14)' }}>+</span>
+                <div><p>Total credit</p><strong>{formatFcfa(totalCredit)}</strong></div>
+              </div>
+              <div className="skpi-card">
+                <span className="skpi-icon" style={{ background: 'rgba(239,68,68,0.14)' }}>-</span>
+                <div><p>Total debit</p><strong>{formatFcfa(totalDebit)}</strong></div>
+              </div>
+              <div className="skpi-card">
+                <span className="skpi-icon" style={{ background: 'rgba(79,70,229,0.14)' }}>#</span>
+                <div><p>Ecritures</p><strong>{entries.length}</strong></div>
+              </div>
+            </div>
+
             <article className="panel-card">
               <div className="panel-top">
                 <h4>Journal comptable OHADA</h4>
-                <span>Écritures réelles uniquement</span>
+                <div className="panel-top-actions">
+                  <span>Ecritures reelles uniquement</span>
+                  {entries.length > 0 && (
+                    <button
+                      type="button"
+                      className="ghost-btn small-btn"
+                      onClick={() => exportTableToPdf({
+                        title: 'Journal comptable OHADA',
+                        subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${entries.length} ecriture(s)`,
+                        columns: ['Date', 'Libelle', 'Compte', 'Categorie', 'Debit', 'Credit'],
+                        rows: entries.map((e) => [formatDate(e.date), e.description, e.accountCode, e.category, e.debit ? formatFcfa(e.debit) : '-', e.credit ? formatFcfa(e.credit) : '-']),
+                        fileName: 'journal-comptable-vpns.pdf',
+                        summary: [
+                          { label: 'Total credit', value: formatFcfa(totalCredit) },
+                          { label: 'Total debit', value: formatFcfa(totalDebit) },
+                        ],
+                      })}
+                    >
+                      Exporter PDF
+                    </button>
+                  )}
+                </div>
               </div>
               {entries.length === 0 ? (
                 <EmptyState
-                  title="Aucune écriture comptable"
-                  description="Ajoutez votre première écriture pour démarrer le suivi OHADA."
+                  title="Aucune ecriture comptable"
+                  description="Ajoutez votre premiere ecriture pour demarrer le suivi OHADA."
                 />
               ) : (
+                <div className="table-scroll">
                 <table>
                   <thead>
                     <tr>
                       <th>Date</th>
-                      <th>Client</th>
-                      <th>Description</th>
-                      <th>Montant</th>
-                      <th>Catégorie</th>
-                      <th>Type</th>
+                      <th>Libelle</th>
+                      <th>Compte</th>
+                      <th>Categorie</th>
+                      <th>Debit</th>
+                      <th>Credit</th>
                     </tr>
                   </thead>
                   <tbody>
                     {entries.map((entry) => (
                       <tr key={entry.id}>
-                        <td>{entry.date}</td>
-                        <td>{entry.client}</td>
+                        <td>{formatDate(entry.date)}</td>
                         <td>{entry.description}</td>
-                        <td>{entry.amount.toLocaleString('fr-FR')} FCFA</td>
+                        <td>{entry.accountCode}</td>
                         <td>{entry.category}</td>
-                        <td>{entry.type}</td>
+                        <td>{entry.debit ? formatFcfa(entry.debit) : '-'}</td>
+                        <td>{entry.credit ? formatFcfa(entry.credit) : '-'}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </article>
 
@@ -160,155 +415,488 @@ function App() {
                 placeholder="Ex: payer EEC 53390"
               />
               <div className="parsed-box">
-                <p><strong>Montant :</strong> {parsedEntry.amount ? `${parsedEntry.amount.toLocaleString('fr-FR')} FCFA` : 'Non détecté'}</p>
-                <p><strong>Catégorie :</strong> {parsedEntry.category}</p>
+                <p><strong>Montant :</strong> {parsedEntry.amount ? formatFcfa(parsedEntry.amount) : 'Non detecte'}</p>
+                <p><strong>Categorie :</strong> {parsedEntry.category}</p>
                 <p><strong>Compte :</strong> {parsedEntry.account}</p>
                 <p><strong>Type :</strong> {parsedEntry.type}</p>
               </div>
             </article>
           </section>
         );
+
       case 'factures':
         return (
           <section className="section-stack">
+            <div className="skpi-row">
+              <div className="skpi-card">
+                <span className="skpi-icon" style={{ background: 'rgba(79,70,229,0.14)' }}>Σ</span>
+                <div><p>Total facture</p><strong>{formatFcfa(totalInvoiced)}</strong></div>
+              </div>
+              <div className="skpi-card">
+                <span className="skpi-icon" style={{ background: 'rgba(16,185,129,0.14)' }}>✓</span>
+                <div><p>Encaisse</p><strong>{formatFcfa(totalPaid)}</strong></div>
+              </div>
+              <div className="skpi-card">
+                <span className="skpi-icon" style={{ background: 'rgba(239,68,68,0.14)' }}>!</span>
+                <div><p>Impayees</p><strong>{totalOverdue}</strong></div>
+              </div>
+            </div>
+
             <article className="panel-card">
               <div className="panel-top">
                 <h4>Factures</h4>
-                <span>Gérez vos documents commerciaux</span>
+                <div className="panel-top-actions">
+                  <span>{invoices.length} facture(s)</span>
+                  <label className="file-import-label">
+                    {isImportingInvoice ? 'Analyse...' : 'Importer une facture'}
+                    <input
+                      type="file"
+                      className="file-import-input"
+                      accept=".txt,.csv,.json,.pdf,.png,.jpg,.jpeg"
+                      disabled={isImportingInvoice}
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) handleImportInvoiceFile(file);
+                        e.target.value = '';
+                      }}
+                    />
+                  </label>
+                  {invoices.length > 0 && (
+                    <button
+                      type="button"
+                      className="ghost-btn small-btn"
+                      onClick={() => exportTableToPdf({
+                        title: 'Factures',
+                        subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${invoices.length} facture(s)`,
+                        columns: ['Numero', 'Client', 'Date', 'Echeance', 'Montant', 'Statut'],
+                        rows: invoices.map((inv) => [inv.invoiceNumber, findClientLabel(inv.clientId), formatDate(inv.date), formatDate(inv.dueDate), formatFcfa(inv.amount), invoiceStatusLabels[inv.status]]),
+                        fileName: 'factures-vpns.pdf',
+                        summary: [
+                          { label: 'Total facture', value: formatFcfa(totalInvoiced) },
+                          { label: 'Encaisse', value: formatFcfa(totalPaid) },
+                          { label: 'Impayees', value: String(totalOverdue) },
+                        ],
+                      })}
+                    >
+                      Exporter PDF
+                    </button>
+                  )}
+                </div>
               </div>
-              <EmptyState
-                title="Aucune facture"
-                description="Créez une nouvelle facture pour commencer votre suivi."
-              />
+              {invoices.length === 0 ? (
+                <EmptyState
+                  title="Aucune facture"
+                  description="Creez votre premiere facture pour suivre vos ventes, ou importez-en une existante."
+                />
+              ) : (
+                <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Numero</th>
+                      <th>Client</th>
+                      <th>Date</th>
+                      <th>Echeance</th>
+                      <th>Montant</th>
+                      <th>Statut</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {invoices.map((invoice) => (
+                      <tr key={invoice.id}>
+                        <td>{invoice.invoiceNumber}</td>
+                        <td>{findClientLabel(invoice.clientId)}</td>
+                        <td>{formatDate(invoice.date)}</td>
+                        <td>{formatDate(invoice.dueDate)}</td>
+                        <td>{formatFcfa(invoice.amount)}</td>
+                        <td><span className={`chip ${invoiceStatusColors[invoice.status]}`}>{invoiceStatusLabels[invoice.status]}</span></td>
+                        <td>
+                          <button
+                            type="button"
+                            className="ghost-btn small-btn"
+                            onClick={() => exportInvoiceToPdf(invoice, findClient(invoice.clientId))}
+                          >
+                            PDF
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                </div>
+              )}
             </article>
           </section>
         );
+
       case 'clients':
         return (
           <section className="section-stack">
             <article className="panel-card">
               <div className="panel-top">
                 <h4>Clients</h4>
-                <span>Fiches et historique</span>
+                <div className="panel-top-actions">
+                  <span>{clientsList.length} client(s)</span>
+                  {clientsList.length > 0 && (
+                    <button
+                      type="button"
+                      className="ghost-btn small-btn"
+                      onClick={() => exportTableToPdf({
+                        title: 'Clients',
+                        subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${clientsList.length} client(s)`,
+                        columns: ['Contact', 'Entreprise', 'Email', 'Telephone', 'Ville', 'Dossier archive'],
+                        rows: clientsList.map((c) => [c.name, c.company, c.email, c.phone, c.city || '-', c.archiveFolder || '-']),
+                        fileName: 'clients-vpns.pdf',
+                      })}
+                    >
+                      Exporter PDF
+                    </button>
+                  )}
+                </div>
               </div>
-              <EmptyState
-                title="Aucun client enregistré"
-                description="Ajoutez vos premiers clients pour démarrer votre activité."
-              />
+              {clientsList.length === 0 ? (
+                <EmptyState
+                  title="Aucun client"
+                  description="Ajoutez votre premier client pour commencer l'archivage et la facturation."
+                />
+              ) : (
+                <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Contact</th>
+                      <th>Entreprise</th>
+                      <th>Email</th>
+                      <th>Telephone</th>
+                      <th>Ville</th>
+                      <th>Dossier archive</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clientsList.map((client) => (
+                      <tr key={client.id}>
+                        <td>{client.name}</td>
+                        <td>{client.company}</td>
+                        <td>{client.email}</td>
+                        <td>{client.phone}</td>
+                        <td>{client.city || '-'}</td>
+                        <td>{client.archiveFolder}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                </div>
+              )}
             </article>
           </section>
         );
+
       case 'agenda':
         return (
           <section className="section-stack">
+            <div className="content-grid">
+              <article className="panel-card">
+                <div className="panel-top">
+                  <h4>Evenements a venir</h4>
+                  <span>{events.length} evenement(s)</span>
+                </div>
+                {events.length === 0 ? (
+                  <EmptyState
+                    title="Aucun evenement"
+                    description="Planifiez votre premier rendez-vous ou rappel."
+                  />
+                ) : (
+                  <div className="table-scroll">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Titre</th>
+                        <th>Date</th>
+                        <th>Heure</th>
+                        <th>Type</th>
+                        <th>Lieu</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {events.map((event) => (
+                        <tr key={event.id}>
+                          <td>{event.title}</td>
+                          <td>{formatDate(event.date)}</td>
+                          <td>{event.time}</td>
+                          <td>{event.type}</td>
+                          <td>{event.location || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  </div>
+                )}
+              </article>
+              <article className="panel-card">
+                <div className="panel-top">
+                  <h4>Calendrier</h4>
+                  <span>Mois en cours</span>
+                </div>
+                <MiniCalendar highlightDates={events.map((e) => e.date)} />
+              </article>
+            </div>
+
             <article className="panel-card">
               <div className="panel-top">
-                <h4>Agenda</h4>
-                <span>Rendez-vous et rappels</span>
+                <h4>Agenda rapide</h4>
+                <span>Assistant</span>
               </div>
-              <EmptyState
-                title="Aucun événement planifié"
-                description="Planifiez vos échéances pour garder le contrôle."
+              <input
+                value={appointmentText}
+                onChange={(e) => setAppointmentText(e.target.value)}
+                placeholder="Ex: demain 14h reunion client"
               />
+              <div className="parsed-box">
+                <p><strong>Titre :</strong> {parsedAppointment.title || 'A definir'}</p>
+                <p><strong>Date :</strong> {parsedAppointment.date || 'Non detectee'}</p>
+                <p><strong>Heure :</strong> {parsedAppointment.hour || 'Non detectee'}</p>
+              </div>
             </article>
           </section>
         );
+
       case 'documents':
         return (
           <section className="section-stack">
             <article className="panel-card">
               <div className="panel-top">
                 <h4>Documents</h4>
-                <span>Archives et pièces jointes</span>
+                <span>Archives et pieces jointes</span>
               </div>
-              <ArchiveManager clients={clientsData} />
+              <ArchiveManager clients={clientsList.map((c) => ({ id: c.id, name: c.name }))} onNotify={pushToast} />
             </article>
           </section>
         );
+
       case 'rapports':
         return (
           <section className="section-stack">
             <article className="panel-card">
               <div className="panel-top">
-                <h4>Rapports</h4>
-                <span>Analyse et performance</span>
+                <h4>Repartition par categorie</h4>
+                <span>Comptabilite</span>
               </div>
-              <EmptyState
-                title="Aucun rapport disponible"
-                description="Créez des opérations pour générer des rapports fiables."
-              />
+              {categoryBreakdown.length === 0 ? (
+                <p className="chart-empty-hint">Aucune donnee a visualiser pour le moment. Ajoutez des ecritures comptables.</p>
+              ) : (
+                <div className="cat-breakdown">
+                  {categoryBreakdown.map((row) => (
+                    <div className="cat-row" key={row.category}>
+                      <span>{row.category}</span>
+                      <div className="progress-track">
+                        <div className="progress-fill" style={{ width: `${row.pct}%`, background: 'var(--primary)' }} />
+                      </div>
+                      <span className="cat-pct">{row.pct}%</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </article>
+
+            <article className="panel-card">
+              <div className="panel-top">
+                <h4>Rapports generes</h4>
+                <div className="panel-top-actions">
+                  <span>{reports.length} rapport(s)</span>
+                  {reports.length > 0 && (
+                    <button
+                      type="button"
+                      className="ghost-btn small-btn"
+                      onClick={() => exportTableToPdf({
+                        title: 'Rapports generes',
+                        subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${reports.length} rapport(s)`,
+                        columns: ['Titre', 'Type', 'Periode', 'Debut', 'Fin'],
+                        rows: reports.map((r) => [r.title, r.type, r.period, formatDate(r.startDate), formatDate(r.endDate)]),
+                        fileName: 'rapports-vpns.pdf',
+                      })}
+                    >
+                      Exporter PDF
+                    </button>
+                  )}
+                </div>
+              </div>
+              {reports.length === 0 ? (
+                <EmptyState
+                  title="Aucun rapport"
+                  description="Generez votre premier rapport pour analyser votre activite."
+                />
+              ) : (
+                <div className="table-scroll">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Titre</th>
+                      <th>Type</th>
+                      <th>Periode</th>
+                      <th>Debut</th>
+                      <th>Fin</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {reports.map((report) => (
+                      <tr key={report.id}>
+                        <td>{report.title}</td>
+                        <td>{report.type}</td>
+                        <td>{report.period}</td>
+                        <td>{formatDate(report.startDate)}</td>
+                        <td>{formatDate(report.endDate)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                </div>
+              )}
             </article>
           </section>
         );
+
       case 'notifications':
         return (
           <section className="section-stack">
+            {systemNotifications.length > 0 && (
+              <article className="panel-card">
+                <div className="panel-top">
+                  <h4>Alertes automatiques</h4>
+                  <span>{systemNotifications.length} alerte(s)</span>
+                </div>
+                <div className="notif-types">
+                  {systemNotifications.map((notif) => (
+                    <div className="notif-type-row" key={notif.id}>
+                      <span className={`notif-dot ${notif.tone}`} />
+                      <span>{notif.title} - {notif.message}</span>
+                      <strong className="chip neutral">Systeme</strong>
+                    </div>
+                  ))}
+                </div>
+              </article>
+            )}
+
             <article className="panel-card">
               <div className="panel-top">
-                <h4>Notifications</h4>
-                <span>Alertes importantes</span>
+                <h4>Notifications et relances</h4>
+                <span>{notifications.length} notification(s)</span>
               </div>
-              <EmptyState
-                title="Aucune notification"
-                description="Toutes les actions importantes s'afficheront ici."
-              />
+              {notifications.length === 0 ? (
+                <EmptyState
+                  title="Aucune notification"
+                  description="Programmez une relance ou une alerte pour vos clients."
+                />
+              ) : (
+                <div className="notif-types">
+                  {notifications.map((notif) => (
+                    <div className="notif-type-row" key={notif.id}>
+                      <span className={`notif-dot ${notificationDotColors[notif.type]}`} />
+                      <span>{notif.title} - {notif.message}</span>
+                      <strong>{formatDate(notif.sendDate)} {notif.sendTime}</strong>
+                    </div>
+                  ))}
+                </div>
+              )}
             </article>
           </section>
         );
+
       case 'parametres':
         return (
           <section className="section-stack">
             <article className="panel-card">
               <div className="panel-top">
-                <h4>Paramètres</h4>
-                <span>Configuration</span>
+                <h4>Parametres</h4>
+                <span>Compte et preferences</span>
               </div>
               <div className="setting-grid">
-                <div className="mini-card">
-                  <strong>Profil</strong>
-                  <p>Modifier les informations de l'entreprise.</p>
+                <div className="setting-item">
+                  <div className="setting-icon" style={{ background: 'rgba(79,70,229,0.12)' }}>👤</div>
+                  <strong>Compte</strong>
+                  <p>{currentUser?.email}</p>
+                  <span>Administrateur</span>
                 </div>
-                <div className="mini-card">
-                  <strong>Préférences</strong>
-                  <p>Personnaliser l'interface et les habitudes.</p>
+                <div className="setting-item">
+                  <div className="setting-icon" style={{ background: 'rgba(16,185,129,0.12)' }}>🔒</div>
+                  <strong>Securite</strong>
+                  <p>Authentification par identifiant unique</p>
+                  <span>Active</span>
                 </div>
-                <div className="mini-card">
-                  <strong>Sécurité</strong>
-                  <p>Gérer les accès et la confidentialité.</p>
+                <div className="setting-item">
+                  <div className="setting-icon" style={{ background: 'rgba(217,119,6,0.12)' }}>🔔</div>
+                  <strong>Notifications</strong>
+                  <p>{notifications.length} notification(s) programmee(s)</p>
+                  <span>Configure</span>
+                </div>
+                <div className="setting-item">
+                  <div className="setting-icon" style={{ background: 'rgba(6,182,212,0.12)' }}>💾</div>
+                  <strong>Donnees</strong>
+                  <p>{clientsList.length} clients - {invoices.length} factures - {entries.length} ecritures</p>
+                  <span>A jour</span>
+                </div>
+                <div className="setting-item">
+                  <div className="setting-icon" style={{ background: 'rgba(239,68,68,0.12)' }}>🚪</div>
+                  <strong>Session</strong>
+                  <p>Se deconnecter de VPNS Consulting</p>
+                  <button type="button" className="secondary-btn" onClick={handleLogout}>Se deconnecter</button>
                 </div>
               </div>
             </article>
           </section>
         );
+
       default:
         return (
           <>
-            <section className="hero-card">
-              <div>
+            <section className="hero-banner">
+              <div className="hero-banner-left">
                 <p className="eyebrow">Tableau de bord</p>
-                <h3>Un logiciel de gestion OHADA moderne et fiable</h3>
-                <p>Commencez avec une base propre : aucun client, aucune facture, aucune donnée de démonstration.</p>
+                <h3 className="hero-title">Un logiciel de gestion OHADA moderne et fiable</h3>
+                <p className="hero-sub">Commencez avec une base propre : ajoutez vos clients, factures et ecritures reelles.</p>
+                <div className="hero-badge-row">
+                  <span className="status-badge green">● Instance active</span>
+                  <span className="status-badge blue">OHADA</span>
+                  <span className="status-badge purple">Multi-clients</span>
+                </div>
               </div>
-              <div className="hero-pill">Prêt pour vos données réelles</div>
+              <div className="hero-score-block">
+                <div className="score-ring">
+                  <span className="score-pct">{clientsList.length + invoices.length + entries.length}</span>
+                  <span className="score-lbl">Elements</span>
+                </div>
+              </div>
             </section>
 
-            <section className="stats-grid">
-              <article className="stat-card statistic-card">
-                <p>Clients enregistrés</p>
-                <strong>Aucun client</strong>
-              </article>
-              <article className="stat-card statistic-card">
-                <p>Factures créées</p>
-                <strong>Aucune facture</strong>
-              </article>
-              <article className="stat-card statistic-card">
-                <p>Écritures comptables</p>
-                <strong>Aucune écriture</strong>
-              </article>
-              <article className="stat-card statistic-card">
-                <p>Documents archivés</p>
-                <strong>Aucun document</strong>
-              </article>
+            <section className="kpi-grid">
+              <div className="kpi-card" style={{ '--kpi-color': '#4f46e5', '--kpi-bg': 'rgba(79,70,229,0.06)' } as CSSProperties}>
+                <span className="kpi-icon">👥</span>
+                <div className="kpi-body">
+                  <p className="kpi-label">Clients</p>
+                  <span className="kpi-value">{clientsList.length}</span>
+                </div>
+              </div>
+              <div className="kpi-card" style={{ '--kpi-color': '#10b981', '--kpi-bg': 'rgba(16,185,129,0.06)' } as CSSProperties}>
+                <span className="kpi-icon">📄</span>
+                <div className="kpi-body">
+                  <p className="kpi-label">Factures</p>
+                  <span className="kpi-value">{invoices.length}</span>
+                </div>
+              </div>
+              <div className="kpi-card" style={{ '--kpi-color': '#f59e0b', '--kpi-bg': 'rgba(245,158,11,0.06)' } as CSSProperties}>
+                <span className="kpi-icon">🧾</span>
+                <div className="kpi-body">
+                  <p className="kpi-label">Ecritures</p>
+                  <span className="kpi-value">{entries.length}</span>
+                </div>
+              </div>
+              <div className="kpi-card" style={{ '--kpi-color': '#8b5cf6', '--kpi-bg': 'rgba(139,92,246,0.06)' } as CSSProperties}>
+                <span className="kpi-icon">🗓️</span>
+                <div className="kpi-body">
+                  <p className="kpi-label">Evenements</p>
+                  <span className="kpi-value">{events.length}</span>
+                </div>
+              </div>
             </section>
 
             <section className="content-grid">
@@ -317,14 +905,23 @@ function App() {
                   <h4>Prise en main</h4>
                   <span>Base propre</span>
                 </div>
-                <p>Votre instance est prête. Ajoutez un client, une facture ou une écriture pour commencer l'analyse.</p>
+                <p>Votre instance est prete. Ajoutez un client, une facture ou une ecriture pour commencer l'analyse.</p>
               </article>
               <article className="panel-card">
                 <div className="panel-top">
-                  <h4>Bonnes pratiques</h4>
-                  <span>OHADA</span>
+                  <h4>Agenda rapide</h4>
+                  <span>Assistant</span>
                 </div>
-                <p>Utilisez uniquement les données réelles pour des rapports fiables et conformes.</p>
+                <input
+                  value={appointmentText}
+                  onChange={(e) => setAppointmentText(e.target.value)}
+                  placeholder="Ex: demain 14h reunion client"
+                />
+                <div className="parsed-box">
+                  <p><strong>Titre :</strong> {parsedAppointment.title || 'A definir'}</p>
+                  <p><strong>Date :</strong> {parsedAppointment.date || 'Non detectee'}</p>
+                  <p><strong>Heure :</strong> {parsedAppointment.hour || 'Non detectee'}</p>
+                </div>
               </article>
             </section>
           </>
@@ -337,126 +934,88 @@ function App() {
     setIsDrawerOpen(false);
   };
 
+  if (!authChecked) {
+    return (
+      <div className="loading-screen">
+        <div className="loading-spinner" />
+        <p>Chargement de VPNS Consulting...</p>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return <LoginComponent onLoginSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <div className="app-shell">
-      {!isMobile && <Sidebar activeSection={activeSection} onSelectSection={handleNavigate} />}
+      <Sidebar
+        activeSection={activeSection}
+        onSelectSection={handleNavigate}
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        userName={currentUser.name}
+        onLogout={handleLogout}
+        notificationCount={totalActiveAlerts}
+      />
 
       <div className="app-content">
         <TopBar
           title={sectionLabels[activeSection]}
           subtitle="VPNS Consulting - Logiciel professionnel OHADA"
           actionLabel={sectionActions[activeSection]}
-          onAction={() => setIsModalOpen(true)}
+          onAction={sectionActions[activeSection] ? handleOpenCreateModal : undefined}
+          onMenuToggle={() => setIsDrawerOpen(true)}
         />
 
         <main className="main-panel">
           <PageHeader
             title={sectionLabels[activeSection]}
-            subtitle="Gestion complète"
-            description="Utilisez les fonctionnalités du module pour piloter votre activité avec rigueur."
+            subtitle="Gestion complete"
+            description="Utilisez les fonctionnalites du module pour piloter votre activite avec rigueur."
           />
           <div className="main-content">{renderSection()}</div>
         </main>
       </div>
 
-      {isMobile && (
-        <>
-          <button
-            type="button"
-            className="floating-menu-toggle"
-            onClick={() => setIsDrawerOpen((current) => !current)}
-            aria-expanded={isDrawerOpen}
-            aria-controls="mobile-sidebar"
-          >
-            {isDrawerOpen ? 'Fermer' : 'Menu'}
-          </button>
-          <div className={`drawer-overlay ${isDrawerOpen ? 'open' : ''}`} onClick={() => setIsDrawerOpen(false)} />
-          <div id="mobile-sidebar" className={`sidebar sidebar-mobile ${isDrawerOpen ? 'open' : ''}`}>
-            <Sidebar activeSection={activeSection} onSelectSection={handleNavigate} onClose={() => setIsDrawerOpen(false)} isMobile />
-          </div>
-        </>
-      )}
+      <div className={`drawer-overlay ${isDrawerOpen ? 'open' : ''}`} onClick={() => setIsDrawerOpen(false)} />
 
-      {isModalOpen && activeSection === 'comptabilite' && (
-        <AccountingEntryModal
-          isOpen={true}
-          onClose={() => setIsModalOpen(false)}
-          onSubmit={(data) => {
-            console.log('Écriture comptable créée:', data);
-            setIsModalOpen(false);
-          }}
-        />
+      {(activeSection === 'dashboard' || activeSection === 'comptabilite') && (
+        <AccountingEntryModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={handleAddEntry} />
       )}
-
-      {isModalOpen && activeSection === 'factures' && (
+      {activeSection === 'factures' && (
         <InvoiceModal
-          isOpen={true}
-          onClose={() => setIsModalOpen(false)}
-          onSubmit={(data) => {
-            console.log('Facture créée:', data);
-            setIsModalOpen(false);
-          }}
-          clients={clientsData}
+          key={invoiceModalKey}
+          isOpen={isModalOpen}
+          onClose={() => { setIsModalOpen(false); setInvoiceInitialData(undefined); }}
+          onSubmit={handleAddInvoice}
+          clients={clientsForSelect}
+          initialData={invoiceInitialData}
         />
+      )}
+      {activeSection === 'clients' && (
+        <ClientModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={handleAddClient} />
+      )}
+      {activeSection === 'agenda' && (
+        <EventModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={handleAddEvent} clients={clientsForSelect} />
+      )}
+      {activeSection === 'rapports' && (
+        <ReportModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={handleAddReport} clients={clientsForSelect} />
+      )}
+      {activeSection === 'notifications' && (
+        <NotificationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={handleAddNotification} clients={clientsForSelect} />
       )}
 
-      {isModalOpen && activeSection === 'clients' && (
-        <ClientModal
-          isOpen={true}
-          onClose={() => setIsModalOpen(false)}
-          onSubmit={(data) => {
-            console.log('Client créé:', data);
-            setIsModalOpen(false);
-          }}
-        />
-      )}
-
-      {isModalOpen && activeSection === 'agenda' && (
-        <EventModal
-          isOpen={true}
-          onClose={() => setIsModalOpen(false)}
-          onSubmit={(data) => {
-            console.log('Événement créé:', data);
-            setIsModalOpen(false);
-          }}
-          clients={clientsData}
-        />
-      )}
-
-      {isModalOpen && activeSection === 'rapports' && (
-        <ReportModal
-          isOpen={true}
-          onClose={() => setIsModalOpen(false)}
-          onSubmit={(data) => {
-            console.log('Rapport créé:', data);
-            setIsModalOpen(false);
-          }}
-          clients={clientsData}
-        />
-      )}
-
-      {isModalOpen && activeSection === 'notifications' && (
-        <NotificationModal
-          isOpen={true}
-          onClose={() => setIsModalOpen(false)}
-          onSubmit={(data) => {
-            console.log('Notification créée:', data);
-            setIsModalOpen(false);
-          }}
-          clients={clientsData}
-        />
-      )}
-
-      {isModalOpen && activeSection === 'dashboard' && (
-        <AccountingEntryModal
-          isOpen={true}
-          onClose={() => setIsModalOpen(false)}
-          onSubmit={(data) => {
-            console.log('Écriture comptable créée:', data);
-            setIsModalOpen(false);
-          }}
-        />
-      )}
+      <div className="toast-stack">
+        {toasts.map((toast) => (
+          <NotificationToast
+            key={toast.id}
+            message={toast.message}
+            type={toast.type}
+            onClose={() => setToasts((prev) => prev.filter((t) => t.id !== toast.id))}
+          />
+        ))}
+      </div>
     </div>
   );
 }

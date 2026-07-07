@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import PrimaryButton from './PrimaryButton';
 
-interface EventData {
+export interface EventData {
   title: string;
   description: string;
   date: string;

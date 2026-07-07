@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import PrimaryButton from './PrimaryButton';
 
-interface InvoiceData {
+export interface InvoiceData {
   invoiceNumber: string;
   clientId: string;
   date: string;
@@ -16,16 +16,17 @@ interface InvoiceModalProps {
   onClose: () => void;
   onSubmit: (data: InvoiceData) => void;
   clients?: Array<{ id: string; name: string }>;
+  initialData?: Partial<InvoiceData>;
 }
 
-export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [] }: InvoiceModalProps) {
-  const [invoiceNumber, setInvoiceNumber] = useState('');
-  const [clientId, setClientId] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [dueDate, setDueDate] = useState('');
-  const [amount, setAmount] = useState('');
-  const [description, setDescription] = useState('');
-  const [status, setStatus] = useState<'draft' | 'sent' | 'paid' | 'overdue'>('draft');
+export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialData }: InvoiceModalProps) {
+  const [invoiceNumber, setInvoiceNumber] = useState(initialData?.invoiceNumber || '');
+  const [clientId, setClientId] = useState(initialData?.clientId || '');
+  const [date, setDate] = useState(initialData?.date || new Date().toISOString().split('T')[0]);
+  const [dueDate, setDueDate] = useState(initialData?.dueDate || '');
+  const [amount, setAmount] = useState(initialData?.amount ? String(initialData.amount) : '');
+  const [description, setDescription] = useState(initialData?.description || '');
+  const [status, setStatus] = useState<'draft' | 'sent' | 'paid' | 'overdue'>(initialData?.status || 'draft');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -80,7 +81,12 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [] }: Invoic
 
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
-            
+            {initialData && (
+              <div className="import-hint">
+                Champs pre-remplis depuis le document importe. Verifiez-les avant d'enregistrer.
+              </div>
+            )}
+
             {/* Invoice Number */}
             <label>
               Numéro de facture *

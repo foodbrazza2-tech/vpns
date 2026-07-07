@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import PrimaryButton from './PrimaryButton';
 
-interface ReportData {
+export interface ReportData {
   title: string;
   type: 'accounting' | 'client' | 'sales' | 'expenses' | 'custom';
   period: string;

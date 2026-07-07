@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import PrimaryButton from './PrimaryButton';
 
-interface NotificationData {
+export interface NotificationData {
   title: string;
   message: string;
   type: 'reminder' | 'alert' | 'success' | 'info';

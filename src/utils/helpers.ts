@@ -90,6 +90,53 @@ export function parseQuickEntry(text: string): ParsedEntry {
   };
 }
 
+export type ImportedInvoiceData = {
+  invoiceNumber: string;
+  amount: number | null;
+  date: string;
+  dueDate: string;
+  description: string;
+};
+
+async function readFileTextSafe(file: File): Promise<string> {
+  const readableTypes = ['text/', 'application/json', 'application/csv'];
+  const isReadable = readableTypes.some((t) => file.type.startsWith(t)) || /\.(txt|csv|json)$/i.test(file.name);
+  if (!isReadable) return '';
+
+  try {
+    return await file.text();
+  } catch {
+    return '';
+  }
+}
+
+export async function parseInvoiceFromFile(file: File): Promise<ImportedInvoiceData> {
+  const nameWithoutExt = file.name.replace(/\.[^.]+$/, '');
+  const content = await readFileTextSafe(file);
+  const haystack = `${nameWithoutExt} ${content}`;
+
+  const invoiceNumberMatch = haystack.match(/\b([A-Z]{2,6}-\d{2,4}-\d{2,6})\b/i);
+  const invoiceNumber = invoiceNumberMatch ? invoiceNumberMatch[1].toUpperCase() : nameWithoutExt.replace(/\s+/g, '-').slice(0, 24).toUpperCase();
+
+  const amountMatches = haystack.match(/\d{1,3}(?:[\s.,]\d{3})+|\d{4,}/g) || [];
+  const amounts = amountMatches
+    .map((m) => Number(m.replace(/[\s.,]/g, '')))
+    .filter((n) => !Number.isNaN(n) && n > 0);
+  const amount = amounts.length > 0 ? Math.max(...amounts) : null;
+
+  const today = new Date();
+  const due = new Date(today);
+  due.setDate(due.getDate() + 30);
+
+  return {
+    invoiceNumber,
+    amount,
+    date: today.toISOString().split('T')[0],
+    dueDate: due.toISOString().split('T')[0],
+    description: content ? content.slice(0, 200).replace(/\s+/g, ' ').trim() : `Importe depuis ${file.name}`,
+  };
+}
+
 export function parseAppointmentText(text: string) {
   const normalized = text.toLowerCase();
   const titleMatch = text.match(/^(.*?)(?=\b(?:rdv|réunion|appel|meeting)\b)/i);

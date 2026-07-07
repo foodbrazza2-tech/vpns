@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import PrimaryButton from './PrimaryButton';
 
-interface AccountingEntryData {
+export interface AccountingEntryData {
   date: string;
   description: string;
   accountCode: string;
