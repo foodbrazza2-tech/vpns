@@ -5,12 +5,12 @@ const ALLOWED_LOGIN_PASSWORD = 'Vpns2025';
 const LOCAL_AUTH_KEY = 'vpns-local-auth';
 
 // Initialisation sécurisée du client Supabase
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder-key-for-testing';
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error(
-    'Variables Supabase manquantes. Configurez VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY'
+if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+  console.warn(
+    'Variables Supabase manquantes. Configurez VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY. L\'authentification et l\'archivage fonctionneront en mode degrade.'
   );
 }
 
