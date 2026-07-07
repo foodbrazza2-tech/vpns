@@ -201,21 +201,23 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
   .sidebar.open { transform: translateX(0); visibility: visible; }
   .app-content { margin-left: 0 !important; }
   .sidebar-close { width: 32px; height: 32px; font-size: 16px; }
-  .nav-item { padding: 10px 12px; gap: 10px; border-radius: 12px; font-size: 0.9rem; }
-  .nav-icon { width: 28px; height: 28px; font-size: 0.9rem; }
+  .nav-list { flex: 1; justify-content: space-evenly; margin-top: 0; gap: 4px; }
+  .nav-item { padding: 15px 16px; gap: 14px; border-radius: 14px; font-size: 1.02rem; }
+  .nav-icon { width: 34px; height: 34px; font-size: 1.05rem; }
+  .sidebar-footer { flex-shrink: 0; }
   .topbar { padding: 10px 14px 0; gap: 12px; }
   .topbar h2 { font-size: 1rem; }
   .menu-toggle { padding: 8px 12px; font-size: 0.85rem; border-radius: 8px; }
-  .main-panel { padding: 12px 14px 16px; gap: 12px; }
-  .main-content { gap: 12px; padding-right: 4px; }
-  .hero-banner { padding: 16px; gap: 12px; }
+  .main-panel { padding: 14px 16px 24px; gap: 18px; }
+  .main-content { gap: 18px; padding-right: 4px; }
+  .hero-banner { padding: 22px 18px; gap: 14px; }
   .hero-title { font-size: 1.1rem; margin: 2px 0 6px; }
   .hero-sub { font-size: 0.85rem; margin: 0 0 8px; max-width: 100%; line-height: 1.4; }
   .hero-score-block { display: none; }
   .hero-badge-row { gap: 5px; }
   .status-badge { padding: 4px 8px; font-size: 0.68rem; }
-  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
-  .kpi-card { padding: 12px 10px 8px; }
+  .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .kpi-card { padding: 16px 14px 12px; }
   .kpi-icon { font-size: 1.1rem; margin-bottom: 2px; }
   .kpi-label { font-size: 0.7rem; }
   .kpi-value { font-size: 1.3rem; }
@@ -226,7 +228,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
   .fkpi { gap: 4px; }
   .fkpi span { font-size: 0.75rem; }
   .fkpi strong { font-size: 0.9rem; }
-  .content-grid { grid-template-columns: 1fr; gap: 10px; }
+  .content-grid { grid-template-columns: 1fr; gap: 14px; }
   .skpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .skpi-card { padding: 10px 12px; gap: 8px; }
   .skpi-icon { width: 34px; height: 34px; font-size: 0.9rem; }
@@ -235,7 +237,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
   .setting-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .mini-card { padding: 10px 12px; border-radius: 12px; }
   .mini-card p { font-size: 0.78rem; margin: 3px 0; }
-  .panel-card { padding: 12px; border-radius: 14px; }
+  .panel-card { padding: 16px; border-radius: 16px; }
   .panel-top { margin-bottom: 8px; gap: 6px; }
   .panel-top h4 { font-size: 0.9rem; }
   .panel-top span { font-size: 0.7rem; }

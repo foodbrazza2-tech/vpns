@@ -20,6 +20,9 @@ export const supabase: SupabaseClient = createClient(supabaseUrl, supabaseAnonKe
     autoRefreshToken: true,
     detectSessionInUrl: true,
     flowType: 'pkce',
+    // sessionStorage clears when the browser/app is fully closed, forcing a fresh login next time
+    // while still surviving reloads/navigation during the same visit.
+    storage: window.sessionStorage,
   },
   db: {
     schema: 'public',
@@ -56,11 +59,11 @@ function setLocalAuth(enabled: boolean): void {
   }
 
   if (enabled) {
-    window.localStorage.setItem(LOCAL_AUTH_KEY, ALLOWED_LOGIN_EMAIL);
+    window.sessionStorage.setItem(LOCAL_AUTH_KEY, ALLOWED_LOGIN_EMAIL);
     return;
   }
 
-  window.localStorage.removeItem(LOCAL_AUTH_KEY);
+  window.sessionStorage.removeItem(LOCAL_AUTH_KEY);
 }
 
 function hasLocalAuth(): boolean {
@@ -68,7 +71,7 @@ function hasLocalAuth(): boolean {
     return false;
   }
 
-  return window.localStorage.getItem(LOCAL_AUTH_KEY) === ALLOWED_LOGIN_EMAIL;
+  return window.sessionStorage.getItem(LOCAL_AUTH_KEY) === ALLOWED_LOGIN_EMAIL;
 }
 
 function createLocalSession(): Session {
