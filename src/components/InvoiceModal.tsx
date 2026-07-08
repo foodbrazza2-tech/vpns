@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import PrimaryButton from './PrimaryButton';
 
 export interface InvoiceData {
-  invoiceNumber: string;
   clientId: string;
   date: string;
   dueDate: string;
@@ -20,7 +19,6 @@ interface InvoiceModalProps {
 }
 
 export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialData }: InvoiceModalProps) {
-  const [invoiceNumber, setInvoiceNumber] = useState(initialData?.invoiceNumber || '');
   const [clientId, setClientId] = useState(initialData?.clientId || '');
   const [date, setDate] = useState(initialData?.date || new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState(initialData?.dueDate || '');
@@ -33,7 +31,6 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
 
-    if (!invoiceNumber.trim()) newErrors.invoiceNumber = 'Numéro de facture requis';
     if (!clientId) newErrors.clientId = 'Client requis';
     if (!date) newErrors.date = 'Date requise';
     if (!dueDate) newErrors.dueDate = 'Date d\'échéance requise';
@@ -47,13 +44,12 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!validate()) return;
 
     setIsSubmitting(true);
     try {
       onSubmit({
-        invoiceNumber,
         clientId,
         date,
         dueDate,
@@ -87,24 +83,13 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
               </div>
             )}
 
-            {/* Invoice Number */}
-            <label>
-              Numéro de facture *
-              <input
-                type="text"
-                value={invoiceNumber}
-                onChange={(e) => setInvoiceNumber(e.target.value)}
-                placeholder="Ex: FAC-2026-001"
-                disabled={isSubmitting}
-              />
-              {errors.invoiceNumber && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.invoiceNumber}</span>}
-            </label>
+            <p className="import-hint">Le numéro de facture sera généré automatiquement (FAC-{new Date().getFullYear()}-NNN), sans doublon ni trou possible.</p>
 
             {/* Client Selection */}
             <label>
               Client *
-              <select 
-                value={clientId} 
+              <select
+                value={clientId}
                 onChange={(e) => setClientId(e.target.value)}
                 disabled={isSubmitting}
               >
@@ -160,8 +145,8 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
             {/* Status */}
             <label>
               Statut
-              <select 
-                value={status} 
+              <select
+                value={status}
                 onChange={(e) => setStatus(e.target.value as 'draft' | 'sent' | 'paid' | 'overdue')}
                 disabled={isSubmitting}
               >

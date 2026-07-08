@@ -4,9 +4,9 @@ import PrimaryButton from './PrimaryButton';
 export interface AccountingEntryData {
   date: string;
   description: string;
-  accountCode: string;
-  debit: number;
-  credit: number;
+  debitAccount: string;
+  creditAccount: string;
+  amount: number;
   reference?: string;
   category: string;
 }
@@ -20,9 +20,9 @@ interface AccountingEntryModalProps {
 export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEntryModalProps) {
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
   const [description, setDescription] = useState('');
-  const [accountCode, setAccountCode] = useState('');
-  const [debit, setDebit] = useState('');
-  const [credit, setCredit] = useState('');
+  const [debitAccount, setDebitAccount] = useState('');
+  const [creditAccount, setCreditAccount] = useState('');
+  const [amount, setAmount] = useState('');
   const [reference, setReference] = useState('');
   const [category, setCategory] = useState('general');
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -33,16 +33,15 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
 
     if (!date) newErrors.date = 'Date requise';
     if (!description.trim()) newErrors.description = 'Description requise';
-    if (!accountCode.trim()) newErrors.accountCode = 'Code compte requis';
-    
-    const debitVal = parseFloat(debit) || 0;
-    const creditVal = parseFloat(credit) || 0;
-    
-    if (debitVal === 0 && creditVal === 0) {
-      newErrors.amount = 'Débit ou crédit requis';
+    if (!debitAccount.trim()) newErrors.debitAccount = 'Compte a debiter requis';
+    if (!creditAccount.trim()) newErrors.creditAccount = 'Compte a crediter requis';
+    if (debitAccount.trim() && creditAccount.trim() && debitAccount.trim() === creditAccount.trim()) {
+      newErrors.creditAccount = 'Le compte credite doit etre different du compte debite';
     }
-    if (debitVal > 0 && creditVal > 0) {
-      newErrors.amount = 'Débit et crédit ne peuvent pas être tous deux saisis';
+
+    const amountVal = parseFloat(amount);
+    if (!amount || Number.isNaN(amountVal) || amountVal <= 0) {
+      newErrors.amount = 'Montant valide requis';
     }
 
     setErrors(newErrors);
@@ -51,7 +50,7 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!validate()) return;
 
     setIsSubmitting(true);
@@ -59,9 +58,9 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
       onSubmit({
         date,
         description,
-        accountCode,
-        debit: parseFloat(debit) || 0,
-        credit: parseFloat(credit) || 0,
+        debitAccount,
+        creditAccount,
+        amount: parseFloat(amount),
         reference: reference || undefined,
         category,
       });
@@ -77,7 +76,7 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div>
-            <p className="eyebrow">Comptabilité OHADA</p>
+            <p className="eyebrow">Comptabilité OHADA - partie double</p>
             <h3>Nouvelle écriture comptable</h3>
           </div>
           <button type="button" className="modal-close" onClick={onClose}>×</button>
@@ -85,7 +84,10 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
 
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
-            
+            <div className="import-hint">
+              Chaque écriture débite un compte et crédite un autre du même montant : l'équilibre débit = crédit est garanti automatiquement (norme SYSCOHADA).
+            </div>
+
             {/* Date */}
             <label>
               Date *
@@ -111,24 +113,11 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
               {errors.description && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.description}</span>}
             </label>
 
-            {/* Account Code */}
-            <label>
-              Code compte (plan comptable OHADA) *
-              <input
-                type="text"
-                value={accountCode}
-                onChange={(e) => setAccountCode(e.target.value)}
-                placeholder="Ex: 401 (Fournisseurs)"
-                disabled={isSubmitting}
-              />
-              {errors.accountCode && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.accountCode}</span>}
-            </label>
-
             {/* Category */}
             <label>
               Catégorie
-              <select 
-                value={category} 
+              <select
+                value={category}
                 onChange={(e) => setCategory(e.target.value)}
                 disabled={isSubmitting}
               >
@@ -141,33 +130,46 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
               </select>
             </label>
 
-            {/* Debit & Credit */}
+            {/* Debit & Credit accounts */}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
               <label>
-                Débit (FCFA)
+                Compte à débiter *
                 <input
-                  type="number"
-                  value={debit}
-                  onChange={(e) => setDebit(e.target.value)}
-                  placeholder="0"
+                  type="text"
+                  value={debitAccount}
+                  onChange={(e) => setDebitAccount(e.target.value)}
+                  placeholder="Ex: 6061 (Energie)"
                   disabled={isSubmitting}
-                  step="100"
                 />
+                {errors.debitAccount && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.debitAccount}</span>}
               </label>
 
               <label>
-                Crédit (FCFA)
+                Compte à créditer *
                 <input
-                  type="number"
-                  value={credit}
-                  onChange={(e) => setCredit(e.target.value)}
-                  placeholder="0"
+                  type="text"
+                  value={creditAccount}
+                  onChange={(e) => setCreditAccount(e.target.value)}
+                  placeholder="Ex: 5211 (Banque)"
                   disabled={isSubmitting}
-                  step="100"
                 />
+                {errors.creditAccount && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.creditAccount}</span>}
               </label>
             </div>
-            {errors.amount && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.amount}</span>}
+
+            {/* Amount */}
+            <label>
+              Montant (FCFA) *
+              <input
+                type="number"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="Ex: 53390"
+                disabled={isSubmitting}
+                step="100"
+              />
+              {errors.amount && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.amount}</span>}
+            </label>
 
             {/* Reference */}
             <label>

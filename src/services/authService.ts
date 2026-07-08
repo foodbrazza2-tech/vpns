@@ -1,8 +1,6 @@
 import { createClient, SupabaseClient, Session } from '@supabase/supabase-js';
 
 const ALLOWED_LOGIN_EMAIL = 'edson@gmail.com';
-const ALLOWED_LOGIN_PASSWORD = 'Vpns2025';
-const LOCAL_AUTH_KEY = 'vpns-local-auth';
 
 // Initialisation sécurisée du client Supabase
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || 'https://placeholder.supabase.co';
@@ -10,7 +8,7 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || 'placeholder-k
 
 if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
   console.warn(
-    'Variables Supabase manquantes. Configurez VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY. L\'authentification et l\'archivage fonctionneront en mode degrade.'
+    'Variables Supabase manquantes. Configurez VITE_SUPABASE_URL et VITE_SUPABASE_ANON_KEY.'
   );
 }
 
@@ -53,47 +51,8 @@ function isAllowedEmail(email: string | undefined | null): boolean {
   return (email || '').trim().toLowerCase() === ALLOWED_LOGIN_EMAIL;
 }
 
-function setLocalAuth(enabled: boolean): void {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  if (enabled) {
-    window.sessionStorage.setItem(LOCAL_AUTH_KEY, ALLOWED_LOGIN_EMAIL);
-    return;
-  }
-
-  window.sessionStorage.removeItem(LOCAL_AUTH_KEY);
-}
-
-function hasLocalAuth(): boolean {
-  if (typeof window === 'undefined') {
-    return false;
-  }
-
-  return window.sessionStorage.getItem(LOCAL_AUTH_KEY) === ALLOWED_LOGIN_EMAIL;
-}
-
-function createLocalSession(): Session {
-  const now = Math.floor(Date.now() / 1000);
-  return {
-    access_token: 'vpns-local-access-token',
-    refresh_token: 'vpns-local-refresh-token',
-    expires_in: 86400,
-    expires_at: now + 86400,
-    token_type: 'bearer',
-    user: {
-      id: 'vpns-local-user',
-      app_metadata: {},
-      user_metadata: { name: 'Edson' },
-      aud: 'authenticated',
-      created_at: new Date().toISOString(),
-      email: ALLOWED_LOGIN_EMAIL,
-    },
-  } as Session;
-}
-
-// Service d'authentification
+// Service d'authentification - repose entierement sur Supabase Auth (mot de passe
+// hashe et verifie cote serveur). Aucun identifiant n'est stocke dans le bundle JS.
 export class AuthService {
   static getAllowedEmail(): string {
     return ALLOWED_LOGIN_EMAIL;
@@ -138,51 +97,38 @@ export class AuthService {
   }
 
   /**
-   * Connecte un utilisateur
+   * Connecte un utilisateur via Supabase Auth (email + mot de passe verifies cote serveur)
    */
   static async signin(email: string, password: string): Promise<AuthResponse> {
-    if (!isAllowedEmail(email) || password !== ALLOWED_LOGIN_PASSWORD) {
+    if (!isAllowedEmail(email)) {
       return {
         user: null,
         session: null,
-        error: new Error('Identifiants non autorises'),
+        error: new Error('Seul l identifiant autorise peut se connecter'),
       };
     }
 
-    try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
 
-      if (error) throw error;
-
-      setLocalAuth(false);
-
+    if (error) {
       return {
-        user: data.user
-          ? {
-              id: data.user.id,
-              email: data.user.email || '',
-              name: data.user.user_metadata?.name,
-            }
-          : null,
-        session: data.session,
-        error: null,
-      };
-    } catch (error) {
-      setLocalAuth(true);
-
-      return {
-        user: {
-          id: 'vpns-local-user',
-          email: ALLOWED_LOGIN_EMAIL,
-          name: 'Edson',
-        },
-        session: createLocalSession(),
-        error: null,
+        user: null,
+        session: null,
+        error,
       };
     }
+
+    return {
+      user: data.user
+        ? {
+            id: data.user.id,
+            email: data.user.email || '',
+            name: data.user.user_metadata?.name,
+          }
+        : null,
+      session: data.session,
+      error: null,
+    };
   }
 
   /**
@@ -190,7 +136,6 @@ export class AuthService {
    */
   static async signout(): Promise<{ error: Error | null }> {
     try {
-      setLocalAuth(false);
       const { error } = await supabase.auth.signOut();
       if (error) throw error;
       return { error: null };
@@ -217,20 +162,9 @@ export class AuthService {
         return null;
       }
 
-      if (session) {
-        return session;
-      }
-
-      if (hasLocalAuth()) {
-        return createLocalSession();
-      }
-
-      return null;
+      return session;
     } catch (error) {
       console.error('Erreur lors de la récupération de la session:', error);
-      if (hasLocalAuth()) {
-        return createLocalSession();
-      }
       return null;
     }
   }
@@ -239,7 +173,7 @@ export class AuthService {
    * Écoute les changements d'authentification
    */
   static onAuthStateChange(callback: (user: AuthUser | null) => void) {
-    const { data } = supabase.auth.onAuthStateChange((event, session) => {
+    const { data } = supabase.auth.onAuthStateChange((_event, session) => {
       if (session?.user && isAllowedEmail(session.user.email)) {
         callback({
           id: session.user.id,
@@ -250,16 +184,6 @@ export class AuthService {
         if (session?.user && !isAllowedEmail(session.user.email)) {
           supabase.auth.signOut();
         }
-
-        if (hasLocalAuth()) {
-          callback({
-            id: 'vpns-local-user',
-            email: ALLOWED_LOGIN_EMAIL,
-            name: 'Edson',
-          });
-          return;
-        }
-
         callback(null);
       }
     });

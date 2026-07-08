@@ -33,7 +33,7 @@ const OHADA_ACCOUNTS: Record<string, string> = {
 
 export function parseQuickEntry(text: string): ParsedEntry {
   const normalized = text.toLowerCase();
-  const amountMatch = normalized.match(/(\d{1,3}(?:[\s.,]\d{3})*(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)/);
+  const amountMatch = normalized.match(/(\d{1,3}(?:[\s.,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?)/);
   const amount = amountMatch ? Number(amountMatch[0].replace(/\s/g, '').replace(',', '.')) : null;
 
   const vendor = normalized.includes('eec')
@@ -78,7 +78,7 @@ export function parseQuickEntry(text: string): ParsedEntry {
     }
   }
 
-  const type = normalized.includes('payer') || normalized.includes('depense') ? 'debit' : 'credit';
+  const type = normalized.includes('recette') || normalized.includes('vente') || normalized.includes('encaisse') ? 'credit' : 'debit';
 
   return {
     amount,

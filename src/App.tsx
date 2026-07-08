@@ -14,18 +14,29 @@ import { LoginComponent } from './components/LoginComponent';
 import NotificationToast from './components/NotificationToast';
 import AuthService from './services/authService';
 import { parseAppointmentText, parseQuickEntry, parseInvoiceFromFile } from './utils/helpers';
-import { exportInvoiceToPdf, exportTableToPdf } from './utils/pdfExport';
+import { exportTableToCsv } from './utils/csvExport';
+import {
+  type EntryRecord,
+  type ClientRecord,
+  type InvoiceRecord,
+  type EventRecord,
+  type ReportRecord,
+  type NotificationRecord,
+  listClients,
+  createClient,
+  listInvoices,
+  createInvoice,
+  listAccountingEntries,
+  createAccountingEntry,
+  listEvents,
+  createEvent,
+  listReports,
+  createReport,
+  listNotifications,
+  createNotification,
+} from './services/businessDataService';
 
 type SectionKey = 'dashboard' | 'comptabilite' | 'factures' | 'clients' | 'agenda' | 'documents' | 'rapports' | 'notifications' | 'parametres';
-
-type WithId<T> = T & { id: string; createdAt: string };
-
-type EntryRecord = WithId<AccountingEntryData>;
-type ClientRecord = WithId<ClientData>;
-type InvoiceRecord = WithId<InvoiceData>;
-type EventRecord = WithId<EventData>;
-type ReportRecord = WithId<ReportData>;
-type NotificationRecord = WithId<NotificationData>;
 
 const sectionLabels: Record<SectionKey, string> = {
   dashboard: 'Tableau de bord',
@@ -71,7 +82,6 @@ const notificationDotColors: Record<NotificationData['type'], string> = {
 };
 
 const makeId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-const nowIso = () => new Date().toISOString();
 
 const formatFcfa = (value: number) => `${value.toLocaleString('fr-FR')} FCFA`;
 const formatDate = (value: string) => {
@@ -129,6 +139,7 @@ function App() {
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [reports, setReports] = useState<ReportRecord[]>([]);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
+  const [isDataLoading, setIsDataLoading] = useState(false);
 
   const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: 'success' | 'info' | 'error' }>>([]);
   const [invoiceInitialData, setInvoiceInitialData] = useState<Partial<InvoiceData> | undefined>(undefined);
@@ -174,6 +185,44 @@ function App() {
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4500);
   };
 
+  useEffect(() => {
+    if (!currentUser) return;
+    let active = true;
+
+    const loadAll = async () => {
+      setIsDataLoading(true);
+      const results = await Promise.allSettled([
+        listClients(),
+        listInvoices(),
+        listAccountingEntries(),
+        listEvents(),
+        listReports(),
+        listNotifications(),
+      ]);
+      if (!active) return;
+
+      const [clientsRes, invoicesRes, entriesRes, eventsRes, reportsRes, notificationsRes] = results;
+      if (clientsRes.status === 'fulfilled') setClientsList(clientsRes.value);
+      if (invoicesRes.status === 'fulfilled') setInvoices(invoicesRes.value);
+      if (entriesRes.status === 'fulfilled') setEntries(entriesRes.value);
+      if (eventsRes.status === 'fulfilled') setEvents(eventsRes.value);
+      if (reportsRes.status === 'fulfilled') setReports(reportsRes.value);
+      if (notificationsRes.status === 'fulfilled') setNotifications(notificationsRes.value);
+
+      const failed = results.some((r) => r.status === 'rejected');
+      if (failed) {
+        pushToast("Certaines donnees n'ont pas pu etre chargees depuis la base (tables Supabase pas encore creees ?).", 'error');
+      }
+
+      setIsDataLoading(false);
+    };
+
+    loadAll();
+    return () => {
+      active = false;
+    };
+  }, [currentUser]);
+
   const openInvoiceModal = (initial?: Partial<InvoiceData>) => {
     setInvoiceInitialData(initial);
     setInvoiceModalKey((k) => k + 1);
@@ -193,7 +242,6 @@ function App() {
     try {
       const parsed = await parseInvoiceFromFile(file);
       openInvoiceModal({
-        invoiceNumber: parsed.invoiceNumber,
         amount: parsed.amount || undefined,
         date: parsed.date,
         dueDate: parsed.dueDate,
@@ -220,45 +268,74 @@ function App() {
     setCurrentUser(null);
   };
 
-  const handleAddEntry = (data: AccountingEntryData) => {
-    setEntries((prev) => [{ id: makeId(), createdAt: nowIso(), ...data }, ...prev]);
-    setIsModalOpen(false);
-    pushToast(`Ecriture "${data.description}" enregistree.`);
+  const handleAddEntry = async (data: AccountingEntryData) => {
+    try {
+      const record = await createAccountingEntry(data);
+      setEntries((prev) => [record, ...prev]);
+      setIsModalOpen(false);
+      pushToast(`Ecriture "${data.description}" enregistree.`);
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
   };
 
-  const handleAddClient = (data: ClientData) => {
-    setClientsList((prev) => [{ id: makeId(), createdAt: nowIso(), ...data }, ...prev]);
-    setIsModalOpen(false);
-    pushToast(`Client ${data.name} ajoute.`);
+  const handleAddClient = async (data: ClientData) => {
+    try {
+      const record = await createClient(data);
+      setClientsList((prev) => [record, ...prev]);
+      setIsModalOpen(false);
+      pushToast(`Client ${data.name} ajoute.`);
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
   };
 
-  const handleAddInvoice = (data: InvoiceData) => {
-    setInvoices((prev) => [{ id: makeId(), createdAt: nowIso(), ...data }, ...prev]);
-    setIsModalOpen(false);
-    setInvoiceInitialData(undefined);
-    pushToast(`Facture ${data.invoiceNumber} creee.`);
+  const handleAddInvoice = async (data: InvoiceData) => {
+    try {
+      const record = await createInvoice(data);
+      setInvoices((prev) => [record, ...prev]);
+      setIsModalOpen(false);
+      setInvoiceInitialData(undefined);
+      pushToast(`Facture ${record.invoiceNumber} creee.`);
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
   };
 
-  const handleAddEvent = (data: EventData) => {
-    setEvents((prev) => [{ id: makeId(), createdAt: nowIso(), ...data }, ...prev]);
-    setIsModalOpen(false);
-    pushToast(`Evenement "${data.title}" planifie.`);
+  const handleAddEvent = async (data: EventData) => {
+    try {
+      const record = await createEvent(data);
+      setEvents((prev) => [record, ...prev]);
+      setIsModalOpen(false);
+      pushToast(`Evenement "${data.title}" planifie.`);
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
   };
 
-  const handleAddReport = (data: ReportData) => {
-    setReports((prev) => [{ id: makeId(), createdAt: nowIso(), ...data }, ...prev]);
-    setIsModalOpen(false);
-    pushToast(`Rapport "${data.title}" genere.`);
+  const handleAddReport = async (data: ReportData) => {
+    try {
+      const record = await createReport(data);
+      setReports((prev) => [record, ...prev]);
+      setIsModalOpen(false);
+      pushToast(`Rapport "${data.title}" genere.`);
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
   };
 
-  const handleAddNotification = (data: NotificationData) => {
-    setNotifications((prev) => [{ id: makeId(), createdAt: nowIso(), ...data }, ...prev]);
-    setIsModalOpen(false);
-    pushToast(`Notification "${data.title}" programmee.`);
+  const handleAddNotification = async (data: NotificationData) => {
+    try {
+      const record = await createNotification(data);
+      setNotifications((prev) => [record, ...prev]);
+      setIsModalOpen(false);
+      pushToast(`Notification "${data.title}" programmee.`);
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
   };
 
-  const totalDebit = entries.reduce((sum, e) => sum + e.debit, 0);
-  const totalCredit = entries.reduce((sum, e) => sum + e.credit, 0);
+  const totalMovements = entries.reduce((sum, e) => sum + e.amount, 0);
   const totalInvoiced = invoices.reduce((sum, i) => sum + i.amount, 0);
   const totalPaid = invoices.filter((i) => i.status === 'paid').reduce((sum, i) => sum + i.amount, 0);
   const totalOverdue = invoices.filter((i) => i.status === 'overdue').length;
@@ -266,8 +343,7 @@ function App() {
   const categoryBreakdown = useMemo(() => {
     const totals = new Map<string, number>();
     entries.forEach((e) => {
-      const amount = e.debit + e.credit;
-      totals.set(e.category, (totals.get(e.category) || 0) + amount);
+      totals.set(e.category, (totals.get(e.category) || 0) + e.amount);
     });
     const grandTotal = Array.from(totals.values()).reduce((a, b) => a + b, 0);
     return Array.from(totals.entries())
@@ -330,16 +406,16 @@ function App() {
           <section className="section-stack">
             <div className="skpi-row">
               <div className="skpi-card">
-                <span className="skpi-icon" style={{ background: 'rgba(16,185,129,0.14)' }}>+</span>
-                <div><p>Total credit</p><strong>{formatFcfa(totalCredit)}</strong></div>
+                <span className="skpi-icon" style={{ background: 'rgba(79,70,229,0.14)' }}>Σ</span>
+                <div><p>Total mouvemente</p><strong>{formatFcfa(totalMovements)}</strong></div>
               </div>
               <div className="skpi-card">
-                <span className="skpi-icon" style={{ background: 'rgba(239,68,68,0.14)' }}>-</span>
-                <div><p>Total debit</p><strong>{formatFcfa(totalDebit)}</strong></div>
-              </div>
-              <div className="skpi-card">
-                <span className="skpi-icon" style={{ background: 'rgba(79,70,229,0.14)' }}>#</span>
+                <span className="skpi-icon" style={{ background: 'rgba(16,185,129,0.14)' }}>#</span>
                 <div><p>Ecritures</p><strong>{entries.length}</strong></div>
+              </div>
+              <div className="skpi-card">
+                <span className="skpi-icon" style={{ background: 'rgba(6,182,212,0.14)' }}>✓</span>
+                <div><p>Equilibre debit/credit</p><strong>Garanti</strong></div>
               </div>
             </div>
 
@@ -347,25 +423,41 @@ function App() {
               <div className="panel-top">
                 <h4>Journal comptable OHADA</h4>
                 <div className="panel-top-actions">
-                  <span>Ecritures reelles uniquement</span>
+                  <span>Partie double - ecritures reelles</span>
                   {entries.length > 0 && (
-                    <button
-                      type="button"
-                      className="ghost-btn small-btn"
-                      onClick={() => exportTableToPdf({
-                        title: 'Journal comptable OHADA',
-                        subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${entries.length} ecriture(s)`,
-                        columns: ['Date', 'Libelle', 'Compte', 'Categorie', 'Debit', 'Credit'],
-                        rows: entries.map((e) => [formatDate(e.date), e.description, e.accountCode, e.category, e.debit ? formatFcfa(e.debit) : '-', e.credit ? formatFcfa(e.credit) : '-']),
-                        fileName: 'journal-comptable-vpns.pdf',
-                        summary: [
-                          { label: 'Total credit', value: formatFcfa(totalCredit) },
-                          { label: 'Total debit', value: formatFcfa(totalDebit) },
-                        ],
-                      })}
-                    >
-                      Exporter PDF
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="ghost-btn small-btn"
+                        onClick={() => exportTableToCsv({
+                          columns: ['Date', 'Libelle', 'Compte debite', 'Compte credite', 'Categorie', 'Montant'],
+                          rows: entries.map((e) => [formatDate(e.date), e.description, e.debitAccount, e.creditAccount, e.category, e.amount]),
+                          fileName: 'journal-comptable-vpns.csv',
+                        })}
+                      >
+                        CSV
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-btn small-btn"
+                        onClick={async () => {
+                          const { exportTableToPdf } = await import('./utils/pdfExport');
+                          exportTableToPdf({
+                            title: 'Journal comptable OHADA',
+                            subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${entries.length} ecriture(s)`,
+                            columns: ['Date', 'Libelle', 'Debit', 'Credit', 'Categorie', 'Montant'],
+                            rows: entries.map((e) => [formatDate(e.date), e.description, e.debitAccount, e.creditAccount, e.category, formatFcfa(e.amount)]),
+                            fileName: 'journal-comptable-vpns.pdf',
+                            summary: [
+                              { label: 'Total mouvemente', value: formatFcfa(totalMovements) },
+                              { label: 'Ecritures', value: String(entries.length) },
+                            ],
+                          });
+                        }}
+                      >
+                        Exporter PDF
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -381,10 +473,10 @@ function App() {
                     <tr>
                       <th>Date</th>
                       <th>Libelle</th>
-                      <th>Compte</th>
+                      <th>Compte debite</th>
+                      <th>Compte credite</th>
                       <th>Categorie</th>
-                      <th>Debit</th>
-                      <th>Credit</th>
+                      <th>Montant</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -392,10 +484,10 @@ function App() {
                       <tr key={entry.id}>
                         <td>{formatDate(entry.date)}</td>
                         <td>{entry.description}</td>
-                        <td>{entry.accountCode}</td>
+                        <td>{entry.debitAccount}</td>
+                        <td>{entry.creditAccount}</td>
                         <td>{entry.category}</td>
-                        <td>{entry.debit ? formatFcfa(entry.debit) : '-'}</td>
-                        <td>{entry.credit ? formatFcfa(entry.credit) : '-'}</td>
+                        <td>{formatFcfa(entry.amount)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -462,24 +554,40 @@ function App() {
                     />
                   </label>
                   {invoices.length > 0 && (
-                    <button
-                      type="button"
-                      className="ghost-btn small-btn"
-                      onClick={() => exportTableToPdf({
-                        title: 'Factures',
-                        subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${invoices.length} facture(s)`,
-                        columns: ['Numero', 'Client', 'Date', 'Echeance', 'Montant', 'Statut'],
-                        rows: invoices.map((inv) => [inv.invoiceNumber, findClientLabel(inv.clientId), formatDate(inv.date), formatDate(inv.dueDate), formatFcfa(inv.amount), invoiceStatusLabels[inv.status]]),
-                        fileName: 'factures-vpns.pdf',
-                        summary: [
-                          { label: 'Total facture', value: formatFcfa(totalInvoiced) },
-                          { label: 'Encaisse', value: formatFcfa(totalPaid) },
-                          { label: 'Impayees', value: String(totalOverdue) },
-                        ],
-                      })}
-                    >
-                      Exporter PDF
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="ghost-btn small-btn"
+                        onClick={() => exportTableToCsv({
+                          columns: ['Numero', 'Client', 'Date', 'Echeance', 'Montant', 'Statut'],
+                          rows: invoices.map((inv) => [inv.invoiceNumber, findClientLabel(inv.clientId), formatDate(inv.date), formatDate(inv.dueDate), inv.amount, invoiceStatusLabels[inv.status]]),
+                          fileName: 'factures-vpns.csv',
+                        })}
+                      >
+                        CSV
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-btn small-btn"
+                        onClick={async () => {
+                          const { exportTableToPdf } = await import('./utils/pdfExport');
+                          exportTableToPdf({
+                            title: 'Factures',
+                            subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${invoices.length} facture(s)`,
+                            columns: ['Numero', 'Client', 'Date', 'Echeance', 'Montant', 'Statut'],
+                            rows: invoices.map((inv) => [inv.invoiceNumber, findClientLabel(inv.clientId), formatDate(inv.date), formatDate(inv.dueDate), formatFcfa(inv.amount), invoiceStatusLabels[inv.status]]),
+                            fileName: 'factures-vpns.pdf',
+                            summary: [
+                              { label: 'Total facture', value: formatFcfa(totalInvoiced) },
+                              { label: 'Encaisse', value: formatFcfa(totalPaid) },
+                              { label: 'Impayees', value: String(totalOverdue) },
+                            ],
+                          });
+                        }}
+                      >
+                        Exporter PDF
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -515,7 +623,10 @@ function App() {
                           <button
                             type="button"
                             className="ghost-btn small-btn"
-                            onClick={() => exportInvoiceToPdf(invoice, findClient(invoice.clientId))}
+                            onClick={async () => {
+                              const { exportInvoiceToPdf } = await import('./utils/pdfExport');
+                              exportInvoiceToPdf(invoice, findClient(invoice.clientId));
+                            }}
                           >
                             PDF
                           </button>
@@ -539,19 +650,35 @@ function App() {
                 <div className="panel-top-actions">
                   <span>{clientsList.length} client(s)</span>
                   {clientsList.length > 0 && (
-                    <button
-                      type="button"
-                      className="ghost-btn small-btn"
-                      onClick={() => exportTableToPdf({
-                        title: 'Clients',
-                        subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${clientsList.length} client(s)`,
-                        columns: ['Contact', 'Entreprise', 'Email', 'Telephone', 'Ville', 'Dossier archive'],
-                        rows: clientsList.map((c) => [c.name, c.company, c.email, c.phone, c.city || '-', c.archiveFolder || '-']),
-                        fileName: 'clients-vpns.pdf',
-                      })}
-                    >
-                      Exporter PDF
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="ghost-btn small-btn"
+                        onClick={() => exportTableToCsv({
+                          columns: ['Contact', 'Entreprise', 'Email', 'Telephone', 'Ville', 'Dossier archive'],
+                          rows: clientsList.map((c) => [c.name, c.company, c.email, c.phone, c.city || '-', c.archiveFolder || '-']),
+                          fileName: 'clients-vpns.csv',
+                        })}
+                      >
+                        CSV
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-btn small-btn"
+                        onClick={async () => {
+                          const { exportTableToPdf } = await import('./utils/pdfExport');
+                          exportTableToPdf({
+                            title: 'Clients',
+                            subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${clientsList.length} client(s)`,
+                            columns: ['Contact', 'Entreprise', 'Email', 'Telephone', 'Ville', 'Dossier archive'],
+                            rows: clientsList.map((c) => [c.name, c.company, c.email, c.phone, c.city || '-', c.archiveFolder || '-']),
+                            fileName: 'clients-vpns.pdf',
+                          });
+                        }}
+                      >
+                        Exporter PDF
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -705,19 +832,35 @@ function App() {
                 <div className="panel-top-actions">
                   <span>{reports.length} rapport(s)</span>
                   {reports.length > 0 && (
-                    <button
-                      type="button"
-                      className="ghost-btn small-btn"
-                      onClick={() => exportTableToPdf({
-                        title: 'Rapports generes',
-                        subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${reports.length} rapport(s)`,
-                        columns: ['Titre', 'Type', 'Periode', 'Debut', 'Fin'],
-                        rows: reports.map((r) => [r.title, r.type, r.period, formatDate(r.startDate), formatDate(r.endDate)]),
-                        fileName: 'rapports-vpns.pdf',
-                      })}
-                    >
-                      Exporter PDF
-                    </button>
+                    <>
+                      <button
+                        type="button"
+                        className="ghost-btn small-btn"
+                        onClick={() => exportTableToCsv({
+                          columns: ['Titre', 'Type', 'Periode', 'Debut', 'Fin'],
+                          rows: reports.map((r) => [r.title, r.type, r.period, formatDate(r.startDate), formatDate(r.endDate)]),
+                          fileName: 'rapports-vpns.csv',
+                        })}
+                      >
+                        CSV
+                      </button>
+                      <button
+                        type="button"
+                        className="ghost-btn small-btn"
+                        onClick={async () => {
+                          const { exportTableToPdf } = await import('./utils/pdfExport');
+                          exportTableToPdf({
+                            title: 'Rapports generes',
+                            subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${reports.length} rapport(s)`,
+                            columns: ['Titre', 'Type', 'Periode', 'Debut', 'Fin'],
+                            rows: reports.map((r) => [r.title, r.type, r.period, formatDate(r.startDate), formatDate(r.endDate)]),
+                            fileName: 'rapports-vpns.pdf',
+                          });
+                        }}
+                      >
+                        Exporter PDF
+                      </button>
+                    </>
                   )}
                 </div>
               </div>
@@ -974,7 +1117,16 @@ function App() {
             subtitle="Gestion complete"
             description="Utilisez les fonctionnalites du module pour piloter votre activite avec rigueur."
           />
-          <div className="main-content">{renderSection()}</div>
+          <div className="main-content">
+            {isDataLoading ? (
+              <div className="loading-inline">
+                <div className="loading-spinner" />
+                <p>Chargement de vos donnees...</p>
+              </div>
+            ) : (
+              renderSection()
+            )}
+          </div>
         </main>
       </div>
 
