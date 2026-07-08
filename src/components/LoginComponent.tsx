@@ -7,8 +7,8 @@ interface LoginProps {
 }
 
 export function LoginComponent({ onLoginSuccess }: LoginProps) {
-  const [email, setEmail] = useState(AuthService.getAllowedEmail());
-  const [password, setPassword] = useState('Vpns2025');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
@@ -80,7 +80,7 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
               placeholder="edson@gmail.com"
               disabled={loading}
               style={styles.input}
-              readOnly
+              autoComplete="off"
               required
             />
           </div>
@@ -95,6 +95,7 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
                 placeholder="••••••••"
                 disabled={loading}
                 style={styles.input}
+                autoComplete="current-password"
                 required
               />
               <button
