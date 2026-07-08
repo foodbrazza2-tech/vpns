@@ -14,8 +14,9 @@
     <link rel="icon" type="image/svg+xml" href="/icons/icon-192x192.svg" />
     <link rel="apple-touch-icon" href="/icons/icon-192x192.svg" />
     
-    <!-- Sécurité -->
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; font-src 'self' data:;" />
+    <!-- Sécurité : la CSP complète (avec connect-src pour Supabase) est injectée par src/main.tsx.
+         Une deuxième balise CSP ici serait cumulée (intersection), pas remplacée, et bloquerait
+         les appels vers Supabase malgre la balise dynamique plus permissive. -->
     <meta http-equiv="X-UA-Compatible" content="IE=edge" />
     <meta name="X-UA-Compatible" content="IE=edge" />
     
