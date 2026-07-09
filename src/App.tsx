@@ -342,8 +342,12 @@ function App() {
   // Exercice comptable SYSCOHADA/OHADA : annee civile (1er janvier - 31 decembre).
   // Les ecritures et factures sont filtrees par exercice selectionne pour que la
   // comptabilite, les factures et les rapports restent cloisonnes annee par annee.
+  // Le selecteur propose toujours l'annee en cours et les 3 precedentes (ex: 2023 a
+  // 2026), meme sans aucune donnee dedans, pour permettre la saisie retroactive -
+  // plus, le cas echeant, toute autre annee ou des ecritures/factures existent deja.
   const availableExercises = useMemo(() => {
-    const years = new Set<number>([new Date().getFullYear()]);
+    const currentYear = new Date().getFullYear();
+    const years = new Set<number>([currentYear, currentYear - 1, currentYear - 2, currentYear - 3]);
     entries.forEach((e) => years.add(yearOf(e.date)));
     invoices.forEach((i) => years.add(yearOf(i.date)));
     return Array.from(years).sort((a, b) => b - a);
