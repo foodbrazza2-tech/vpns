@@ -90,6 +90,9 @@ const formatDate = (value: string) => {
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleDateString('fr-FR');
 };
+// Extrait l'annee depuis une chaine yyyy-mm-dd sans passer par Date() (evite les
+// decalages de fuseau horaire pres du 1er janvier).
+const yearOf = (value: string) => Number(value.slice(0, 4));
 
 function MiniCalendar({ highlightDates }: { highlightDates: string[] }) {
   const today = new Date();
@@ -140,6 +143,7 @@ function App() {
   const [reports, setReports] = useState<ReportRecord[]>([]);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
   const [isDataLoading, setIsDataLoading] = useState(false);
+  const [selectedExercise, setSelectedExercise] = useState<number>(new Date().getFullYear());
 
   const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: 'success' | 'info' | 'error' }>>([]);
   const [invoiceInitialData, setInvoiceInitialData] = useState<Partial<InvoiceData> | undefined>(undefined);
@@ -335,21 +339,41 @@ function App() {
     }
   };
 
-  const totalMovements = entries.reduce((sum, e) => sum + e.amount, 0);
-  const totalInvoiced = invoices.reduce((sum, i) => sum + i.amount, 0);
-  const totalPaid = invoices.filter((i) => i.status === 'paid').reduce((sum, i) => sum + i.amount, 0);
-  const totalOverdue = invoices.filter((i) => i.status === 'overdue').length;
+  // Exercice comptable SYSCOHADA/OHADA : annee civile (1er janvier - 31 decembre).
+  // Les ecritures et factures sont filtrees par exercice selectionne pour que la
+  // comptabilite, les factures et les rapports restent cloisonnes annee par annee.
+  const availableExercises = useMemo(() => {
+    const years = new Set<number>([new Date().getFullYear()]);
+    entries.forEach((e) => years.add(yearOf(e.date)));
+    invoices.forEach((i) => years.add(yearOf(i.date)));
+    return Array.from(years).sort((a, b) => b - a);
+  }, [entries, invoices]);
+
+  const entriesForExercise = useMemo(
+    () => entries.filter((e) => yearOf(e.date) === selectedExercise),
+    [entries, selectedExercise]
+  );
+
+  const invoicesForExercise = useMemo(
+    () => invoices.filter((i) => yearOf(i.date) === selectedExercise),
+    [invoices, selectedExercise]
+  );
+
+  const totalMovements = entriesForExercise.reduce((sum, e) => sum + e.amount, 0);
+  const totalInvoiced = invoicesForExercise.reduce((sum, i) => sum + i.amount, 0);
+  const totalPaid = invoicesForExercise.filter((i) => i.status === 'paid').reduce((sum, i) => sum + i.amount, 0);
+  const totalOverdue = invoicesForExercise.filter((i) => i.status === 'overdue').length;
 
   const categoryBreakdown = useMemo(() => {
     const totals = new Map<string, number>();
-    entries.forEach((e) => {
+    entriesForExercise.forEach((e) => {
       totals.set(e.category, (totals.get(e.category) || 0) + e.amount);
     });
     const grandTotal = Array.from(totals.values()).reduce((a, b) => a + b, 0);
     return Array.from(totals.entries())
       .map(([category, amount]) => ({ category, amount, pct: grandTotal ? Math.round((amount / grandTotal) * 100) : 0 }))
       .sort((a, b) => b.amount - a.amount);
-  }, [entries]);
+  }, [entriesForExercise]);
 
   const systemNotifications = useMemo(() => {
     const list: Array<{ id: string; title: string; message: string; date: string; tone: 'orange' | 'red' | 'blue' }> = [];
@@ -404,6 +428,15 @@ function App() {
       case 'comptabilite':
         return (
           <section className="section-stack">
+            <div className="exercise-bar">
+              <span>Exercice comptable (1er janvier - 31 decembre)</span>
+              <select value={selectedExercise} onChange={(e) => setSelectedExercise(Number(e.target.value))}>
+                {availableExercises.map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+            </div>
+
             <div className="skpi-row">
               <div className="skpi-card">
                 <span className="skpi-icon" style={{ background: 'rgba(79,70,229,0.14)' }}>Σ</span>
@@ -411,7 +444,7 @@ function App() {
               </div>
               <div className="skpi-card">
                 <span className="skpi-icon" style={{ background: 'rgba(16,185,129,0.14)' }}>#</span>
-                <div><p>Ecritures</p><strong>{entries.length}</strong></div>
+                <div><p>Ecritures {selectedExercise}</p><strong>{entriesForExercise.length}</strong></div>
               </div>
               <div className="skpi-card">
                 <span className="skpi-icon" style={{ background: 'rgba(6,182,212,0.14)' }}>✓</span>
@@ -421,18 +454,18 @@ function App() {
 
             <article className="panel-card">
               <div className="panel-top">
-                <h4>Journal comptable OHADA</h4>
+                <h4>Journal comptable OHADA - Exercice {selectedExercise}</h4>
                 <div className="panel-top-actions">
                   <span>Partie double - ecritures reelles</span>
-                  {entries.length > 0 && (
+                  {entriesForExercise.length > 0 && (
                     <>
                       <button
                         type="button"
                         className="ghost-btn small-btn"
                         onClick={() => exportTableToCsv({
                           columns: ['Date', 'Libelle', 'Compte debite', 'Compte credite', 'Categorie', 'Montant'],
-                          rows: entries.map((e) => [formatDate(e.date), e.description, e.debitAccount, e.creditAccount, e.category, e.amount]),
-                          fileName: 'journal-comptable-vpns.csv',
+                          rows: entriesForExercise.map((e) => [formatDate(e.date), e.description, e.debitAccount, e.creditAccount, e.category, e.amount]),
+                          fileName: `journal-comptable-vpns-${selectedExercise}.csv`,
                         })}
                       >
                         CSV
@@ -443,14 +476,14 @@ function App() {
                         onClick={async () => {
                           const { exportTableToPdf } = await import('./utils/pdfExport');
                           exportTableToPdf({
-                            title: 'Journal comptable OHADA',
-                            subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${entries.length} ecriture(s)`,
+                            title: `Journal comptable OHADA - Exercice ${selectedExercise}`,
+                            subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${entriesForExercise.length} ecriture(s)`,
                             columns: ['Date', 'Libelle', 'Debit', 'Credit', 'Categorie', 'Montant'],
-                            rows: entries.map((e) => [formatDate(e.date), e.description, e.debitAccount, e.creditAccount, e.category, formatFcfa(e.amount)]),
-                            fileName: 'journal-comptable-vpns.pdf',
+                            rows: entriesForExercise.map((e) => [formatDate(e.date), e.description, e.debitAccount, e.creditAccount, e.category, formatFcfa(e.amount)]),
+                            fileName: `journal-comptable-vpns-${selectedExercise}.pdf`,
                             summary: [
                               { label: 'Total mouvemente', value: formatFcfa(totalMovements) },
-                              { label: 'Ecritures', value: String(entries.length) },
+                              { label: 'Ecritures', value: String(entriesForExercise.length) },
                             ],
                           });
                         }}
@@ -461,10 +494,10 @@ function App() {
                   )}
                 </div>
               </div>
-              {entries.length === 0 ? (
+              {entriesForExercise.length === 0 ? (
                 <EmptyState
-                  title="Aucune ecriture comptable"
-                  description="Ajoutez votre premiere ecriture pour demarrer le suivi OHADA."
+                  title={`Aucune ecriture sur l'exercice ${selectedExercise}`}
+                  description="Ajoutez une ecriture ou changez d'exercice comptable ci-dessus."
                 />
               ) : (
                 <div className="table-scroll">
@@ -480,7 +513,7 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {entries.map((entry) => (
+                    {entriesForExercise.map((entry) => (
                       <tr key={entry.id}>
                         <td>{formatDate(entry.date)}</td>
                         <td>{entry.description}</td>
@@ -519,6 +552,15 @@ function App() {
       case 'factures':
         return (
           <section className="section-stack">
+            <div className="exercise-bar">
+              <span>Exercice comptable (1er janvier - 31 decembre)</span>
+              <select value={selectedExercise} onChange={(e) => setSelectedExercise(Number(e.target.value))}>
+                {availableExercises.map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+            </div>
+
             <div className="skpi-row">
               <div className="skpi-card">
                 <span className="skpi-icon" style={{ background: 'rgba(79,70,229,0.14)' }}>Σ</span>
@@ -536,9 +578,9 @@ function App() {
 
             <article className="panel-card">
               <div className="panel-top">
-                <h4>Factures</h4>
+                <h4>Factures - Exercice {selectedExercise}</h4>
                 <div className="panel-top-actions">
-                  <span>{invoices.length} facture(s)</span>
+                  <span>{invoicesForExercise.length} facture(s)</span>
                   <label className="file-import-label">
                     {isImportingInvoice ? 'Analyse...' : 'Importer une facture'}
                     <input
@@ -553,15 +595,15 @@ function App() {
                       }}
                     />
                   </label>
-                  {invoices.length > 0 && (
+                  {invoicesForExercise.length > 0 && (
                     <>
                       <button
                         type="button"
                         className="ghost-btn small-btn"
                         onClick={() => exportTableToCsv({
                           columns: ['Numero', 'Client', 'Date', 'Echeance', 'Montant', 'Statut'],
-                          rows: invoices.map((inv) => [inv.invoiceNumber, findClientLabel(inv.clientId), formatDate(inv.date), formatDate(inv.dueDate), inv.amount, invoiceStatusLabels[inv.status]]),
-                          fileName: 'factures-vpns.csv',
+                          rows: invoicesForExercise.map((inv) => [inv.invoiceNumber, findClientLabel(inv.clientId), formatDate(inv.date), formatDate(inv.dueDate), inv.amount, invoiceStatusLabels[inv.status]]),
+                          fileName: `factures-vpns-${selectedExercise}.csv`,
                         })}
                       >
                         CSV
@@ -572,11 +614,11 @@ function App() {
                         onClick={async () => {
                           const { exportTableToPdf } = await import('./utils/pdfExport');
                           exportTableToPdf({
-                            title: 'Factures',
-                            subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${invoices.length} facture(s)`,
+                            title: `Factures - Exercice ${selectedExercise}`,
+                            subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${invoicesForExercise.length} facture(s)`,
                             columns: ['Numero', 'Client', 'Date', 'Echeance', 'Montant', 'Statut'],
-                            rows: invoices.map((inv) => [inv.invoiceNumber, findClientLabel(inv.clientId), formatDate(inv.date), formatDate(inv.dueDate), formatFcfa(inv.amount), invoiceStatusLabels[inv.status]]),
-                            fileName: 'factures-vpns.pdf',
+                            rows: invoicesForExercise.map((inv) => [inv.invoiceNumber, findClientLabel(inv.clientId), formatDate(inv.date), formatDate(inv.dueDate), formatFcfa(inv.amount), invoiceStatusLabels[inv.status]]),
+                            fileName: `factures-vpns-${selectedExercise}.pdf`,
                             summary: [
                               { label: 'Total facture', value: formatFcfa(totalInvoiced) },
                               { label: 'Encaisse', value: formatFcfa(totalPaid) },
@@ -591,10 +633,10 @@ function App() {
                   )}
                 </div>
               </div>
-              {invoices.length === 0 ? (
+              {invoicesForExercise.length === 0 ? (
                 <EmptyState
-                  title="Aucune facture"
-                  description="Creez votre premiere facture pour suivre vos ventes, ou importez-en une existante."
+                  title={`Aucune facture sur l'exercice ${selectedExercise}`}
+                  description="Creez une facture, importez-en une existante, ou changez d'exercice comptable ci-dessus."
                 />
               ) : (
                 <div className="table-scroll">
@@ -611,7 +653,7 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {invoices.map((invoice) => (
+                    {invoicesForExercise.map((invoice) => (
                       <tr key={invoice.id}>
                         <td>{invoice.invoiceNumber}</td>
                         <td>{findClientLabel(invoice.clientId)}</td>
@@ -804,9 +846,18 @@ function App() {
       case 'rapports':
         return (
           <section className="section-stack">
+            <div className="exercise-bar">
+              <span>Exercice comptable (1er janvier - 31 decembre)</span>
+              <select value={selectedExercise} onChange={(e) => setSelectedExercise(Number(e.target.value))}>
+                {availableExercises.map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+            </div>
+
             <article className="panel-card">
               <div className="panel-top">
-                <h4>Repartition par categorie</h4>
+                <h4>Repartition par categorie - Exercice {selectedExercise}</h4>
                 <span>Comptabilite</span>
               </div>
               {categoryBreakdown.length === 0 ? (
