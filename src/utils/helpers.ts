@@ -110,18 +110,39 @@ async function readFileTextSafe(file: File): Promise<string> {
   }
 }
 
+// Extrait les montants plausibles d'un texte. Ecarte les nombres qui ressemblent
+// a une annee (1990-2099) sans separateur de milliers, pour ne pas confondre un
+// numero de facture "FAC-2025-042" avec un montant.
+export function extractAmounts(text: string): number[] {
+  const matches = text.match(/\d{1,3}(?:[\s.,]\d{3})+|\d{4,}/g) || [];
+  return matches
+    .map((m) => ({ raw: m, value: Number(m.replace(/[\s.,]/g, '')) }))
+    .filter(({ raw, value }) => {
+      if (Number.isNaN(value) || value <= 0) return false;
+      // Un nombre de 4 chiffres sans separateur dans la plage des annees est ignore.
+      const hasSeparator = /[\s.,]/.test(raw);
+      if (!hasSeparator && value >= 1990 && value <= 2099) return false;
+      return true;
+    })
+    .map(({ value }) => value);
+}
+
 export async function parseInvoiceFromFile(file: File): Promise<ImportedInvoiceData> {
   const nameWithoutExt = file.name.replace(/\.[^.]+$/, '');
   const content = await readFileTextSafe(file);
-  const haystack = `${nameWithoutExt} ${content}`;
 
-  const invoiceNumberMatch = haystack.match(/\b([A-Z]{2,6}-\d{2,4}-\d{2,6})\b/i);
+  const invoiceNumberMatch = `${nameWithoutExt} ${content}`.match(/\b([A-Z]{2,6}-\d{2,4}-\d{2,6})\b/i);
   const invoiceNumber = invoiceNumberMatch ? invoiceNumberMatch[1].toUpperCase() : nameWithoutExt.replace(/\s+/g, '-').slice(0, 24).toUpperCase();
 
-  const amountMatches = haystack.match(/\d{1,3}(?:[\s.,]\d{3})+|\d{4,}/g) || [];
-  const amounts = amountMatches
-    .map((m) => Number(m.replace(/[\s.,]/g, '')))
-    .filter((n) => !Number.isNaN(n) && n > 0);
+  // On cherche le montant d'abord dans le contenu du document (plus fiable), et on
+  // retire le numero de facture du texte pour ne pas capter ses chiffres. Le nom
+  // du fichier n'est utilise qu'en dernier recours.
+  const invoiceToken = invoiceNumberMatch ? invoiceNumberMatch[1] : '';
+  const contentClean = content.split(invoiceToken).join(' ');
+  const nameClean = nameWithoutExt.split(invoiceToken).join(' ');
+
+  const contentAmounts = extractAmounts(contentClean);
+  const amounts = contentAmounts.length > 0 ? contentAmounts : extractAmounts(nameClean);
   const amount = amounts.length > 0 ? Math.max(...amounts) : null;
 
   const today = new Date();
