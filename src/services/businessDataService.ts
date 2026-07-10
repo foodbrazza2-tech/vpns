@@ -9,10 +9,20 @@ import type { NotificationData } from '../components/NotificationModal';
 export type WithId<T> = T & { id: string; createdAt: string };
 export type ClientRecord = WithId<ClientData>;
 export type InvoiceRecord = WithId<InvoiceData> & { invoiceNumber: string };
-export type EntryRecord = WithId<AccountingEntryData>;
+export type EntryRecord = WithId<AccountingEntryData> & { reconciled: boolean; reversed: boolean; reversesEntryId?: string };
 export type EventRecord = WithId<EventData>;
 export type ReportRecord = WithId<ReportData>;
 export type NotificationRecord = WithId<NotificationData>;
+
+export interface PaymentRecord {
+  id: string;
+  invoiceId: string;
+  amount: number;
+  paymentDate: string;
+  method: string;
+  note?: string;
+  createdAt: string;
+}
 
 function unwrap<T>(result: { data: T | null; error: { message: string } | null }, action: string): T {
   if (result.error) {
@@ -77,20 +87,31 @@ export async function createClient(data: ClientData): Promise<ClientRecord> {
 // ═══════════════════════════════════════════
 // INVOICES
 // ═══════════════════════════════════════════
-export async function listInvoices(): Promise<InvoiceRecord[]> {
-  const { data, error } = await supabase.from('invoices').select('*').order('created_at', { ascending: false });
-  if (error) throw new Error(`Chargement des factures: ${error.message}`);
-  return (data || []).map((row: any) => ({
+function mapInvoiceRow(row: any): InvoiceRecord {
+  const amount = Number(row.amount);
+  const amountHt = row.amount_ht != null ? Number(row.amount_ht) : Math.round((amount / 1.18) * 100) / 100;
+  const vatRate = row.vat_rate != null ? Number(row.vat_rate) : 18;
+  const vatAmount = row.vat_amount != null ? Number(row.vat_amount) : Math.round((amount - amountHt) * 100) / 100;
+  return {
     id: row.id,
     createdAt: row.created_at,
     invoiceNumber: row.invoice_number,
     clientId: row.client_id || '',
     date: row.invoice_date,
     dueDate: row.due_date,
-    amount: Number(row.amount),
+    amountHt,
+    vatRate,
+    vatAmount,
+    amount,
     description: row.description || '',
     status: row.status,
-  }));
+  };
+}
+
+export async function listInvoices(): Promise<InvoiceRecord[]> {
+  const { data, error } = await supabase.from('invoices').select('*').order('created_at', { ascending: false });
+  if (error) throw new Error(`Chargement des factures: ${error.message}`);
+  return (data || []).map(mapInvoiceRow);
 }
 
 export async function createInvoice(data: InvoiceData): Promise<InvoiceRecord> {
@@ -100,6 +121,9 @@ export async function createInvoice(data: InvoiceData): Promise<InvoiceRecord> {
       client_id: data.clientId || null,
       invoice_date: data.date,
       due_date: data.dueDate,
+      amount_ht: data.amountHt,
+      vat_rate: data.vatRate,
+      vat_amount: data.vatAmount,
       amount: data.amount,
       description: data.description || null,
       status: data.status,
@@ -107,26 +131,14 @@ export async function createInvoice(data: InvoiceData): Promise<InvoiceRecord> {
     .select('*')
     .single();
   const row: any = unwrap(result, 'Creation de la facture');
-  return {
-    id: row.id,
-    createdAt: row.created_at,
-    invoiceNumber: row.invoice_number,
-    clientId: row.client_id || '',
-    date: row.invoice_date,
-    dueDate: row.due_date,
-    amount: Number(row.amount),
-    description: row.description || '',
-    status: row.status,
-  };
+  return mapInvoiceRow(row);
 }
 
 // ═══════════════════════════════════════════
 // ACCOUNTING ENTRIES
 // ═══════════════════════════════════════════
-export async function listAccountingEntries(): Promise<EntryRecord[]> {
-  const { data, error } = await supabase.from('accounting_entries').select('*').order('entry_date', { ascending: false });
-  if (error) throw new Error(`Chargement du journal comptable: ${error.message}`);
-  return (data || []).map((row: any) => ({
+function mapEntryRow(row: any): EntryRecord {
+  return {
     id: row.id,
     createdAt: row.created_at,
     date: row.entry_date,
@@ -136,7 +148,16 @@ export async function listAccountingEntries(): Promise<EntryRecord[]> {
     amount: Number(row.amount),
     category: row.category,
     reference: row.reference || undefined,
-  }));
+    reconciled: row.reconciled ?? false,
+    reversed: row.reversed ?? false,
+    reversesEntryId: row.reverses_entry_id || undefined,
+  };
+}
+
+export async function listAccountingEntries(): Promise<EntryRecord[]> {
+  const { data, error } = await supabase.from('accounting_entries').select('*').order('entry_date', { ascending: false });
+  if (error) throw new Error(`Chargement du journal comptable: ${error.message}`);
+  return (data || []).map(mapEntryRow);
 }
 
 export async function createAccountingEntry(data: AccountingEntryData): Promise<EntryRecord> {
@@ -154,17 +175,92 @@ export async function createAccountingEntry(data: AccountingEntryData): Promise<
     .select('*')
     .single();
   const row: any = unwrap(result, 'Creation de l\'ecriture comptable');
+  return mapEntryRow(row);
+}
+
+// Contre-passation : cree une ecriture d'annulation (debit/credit inverses) et
+// marque l'originale comme contre-passee. On ne supprime jamais une ecriture.
+export async function reverseAccountingEntry(entry: EntryRecord): Promise<{ reversal: EntryRecord; original: EntryRecord }> {
+  const reversalResult = await supabase
+    .from('accounting_entries')
+    .insert({
+      entry_date: new Date().toISOString().split('T')[0],
+      description: `Contre-passation : ${entry.description}`,
+      debit_account: entry.creditAccount,
+      credit_account: entry.debitAccount,
+      amount: entry.amount,
+      category: entry.category,
+      reference: entry.reference || null,
+      reverses_entry_id: entry.id,
+    })
+    .select('*')
+    .single();
+  const reversalRow: any = unwrap(reversalResult, 'Contre-passation');
+
+  const updateResult = await supabase
+    .from('accounting_entries')
+    .update({ reversed: true })
+    .eq('id', entry.id)
+    .select('*')
+    .single();
+  const originalRow: any = unwrap(updateResult, 'Marquage de l\'ecriture contre-passee');
+
+  return { reversal: mapEntryRow(reversalRow), original: mapEntryRow(originalRow) };
+}
+
+// Rapprochement bancaire : bascule l'etat "rapproche" d'une ecriture de tresorerie.
+export async function setEntryReconciled(entryId: string, reconciled: boolean): Promise<EntryRecord> {
+  const result = await supabase
+    .from('accounting_entries')
+    .update({ reconciled })
+    .eq('id', entryId)
+    .select('*')
+    .single();
+  const row: any = unwrap(result, 'Rapprochement bancaire');
+  return mapEntryRow(row);
+}
+
+// ═══════════════════════════════════════════
+// PAIEMENTS DE FACTURES (reglements partiels)
+// ═══════════════════════════════════════════
+function mapPaymentRow(row: any): PaymentRecord {
   return {
     id: row.id,
-    createdAt: row.created_at,
-    date: row.entry_date,
-    description: row.description,
-    debitAccount: row.debit_account,
-    creditAccount: row.credit_account,
+    invoiceId: row.invoice_id,
     amount: Number(row.amount),
-    category: row.category,
-    reference: row.reference || undefined,
+    paymentDate: row.payment_date,
+    method: row.method,
+    note: row.note || undefined,
+    createdAt: row.created_at,
   };
+}
+
+export async function listPayments(): Promise<PaymentRecord[]> {
+  const { data, error } = await supabase.from('invoice_payments').select('*').order('payment_date', { ascending: false });
+  if (error) throw new Error(`Chargement des paiements: ${error.message}`);
+  return (data || []).map(mapPaymentRow);
+}
+
+export async function createPayment(input: { invoiceId: string; amount: number; paymentDate: string; method: string; note?: string }): Promise<PaymentRecord> {
+  const result = await supabase
+    .from('invoice_payments')
+    .insert({
+      invoice_id: input.invoiceId,
+      amount: input.amount,
+      payment_date: input.paymentDate,
+      method: input.method,
+      note: input.note || null,
+    })
+    .select('*')
+    .single();
+  const row: any = unwrap(result, 'Enregistrement du paiement');
+  return mapPaymentRow(row);
+}
+
+// Met a jour le statut d'une facture (ex: passage a "paid" quand solde nul).
+export async function updateInvoiceStatus(invoiceId: string, status: InvoiceData['status']): Promise<void> {
+  const { error } = await supabase.from('invoices').update({ status }).eq('id', invoiceId);
+  if (error) throw new Error(`Mise a jour du statut de la facture: ${error.message}`);
 }
 
 // ═══════════════════════════════════════════

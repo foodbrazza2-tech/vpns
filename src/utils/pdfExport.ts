@@ -115,6 +115,9 @@ export function exportInvoiceToPdf(invoice: {
   date: string;
   dueDate: string;
   amount: number;
+  amountHt?: number;
+  vatRate?: number;
+  vatAmount?: number;
   description: string;
   status: string;
 }, client: { name: string; company: string; email: string; phone: string; address: string; city: string; taxId?: string } | undefined) {
@@ -143,20 +146,30 @@ export function exportInvoiceToPdf(invoice: {
   doc.text(`Echeance : ${new Date(invoice.dueDate).toLocaleDateString('fr-FR')}`, rightX, 73, { align: 'right' });
   doc.text(`Statut : ${invoice.status}`, rightX, 78, { align: 'right' });
 
+  const ht = invoice.amountHt != null ? invoice.amountHt : Math.round((invoice.amount / 1.18) * 100) / 100;
+  const rate = invoice.vatRate != null ? invoice.vatRate : 18;
+  const vat = invoice.vatAmount != null ? invoice.vatAmount : Math.round((invoice.amount - ht) * 100) / 100;
+
   autoTable(doc, {
     startY: 102,
-    head: [['Description', 'Montant (FCFA)']],
-    body: [[invoice.description || 'Prestation de services', invoice.amount.toLocaleString('fr-FR')]],
+    head: [['Description', 'Montant HT (FCFA)']],
+    body: [[invoice.description || 'Prestation de services', ht.toLocaleString('fr-FR')]],
     theme: 'striped',
     headStyles: { fillColor: hexToRgb(BRAND), textColor: 255, fontStyle: 'bold' },
     styles: { fontSize: 10, cellPadding: 6 },
   });
 
-  const finalY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10;
+  const afterTableY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+  doc.setFontSize(10);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(...hexToRgb(TEXT));
+  doc.text(`Total HT : ${ht.toLocaleString('fr-FR')} FCFA`, rightX, afterTableY, { align: 'right' });
+  doc.text(`TVA (${rate}%) : ${vat.toLocaleString('fr-FR')} FCFA`, rightX, afterTableY + 6, { align: 'right' });
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(12);
-  doc.text(`Total : ${invoice.amount.toLocaleString('fr-FR')} FCFA`, rightX, finalY, { align: 'right' });
+  doc.text(`Total TTC : ${invoice.amount.toLocaleString('fr-FR')} FCFA`, rightX, afterTableY + 14, { align: 'right' });
 
+  const finalY = afterTableY + 14;
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(9);
   doc.setTextColor(...hexToRgb(MUTED));

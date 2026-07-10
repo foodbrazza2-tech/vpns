@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import PrimaryButton from './PrimaryButton';
+import { PLAN_COMPTABLE_SYSCOHADA, libelleCompte } from '../data/planComptable';
 
 export interface AccountingEntryData {
   date: string;
@@ -71,6 +72,18 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
 
   if (!isOpen) return null;
 
+  const accountsDatalist = (
+    <datalist id="plan-comptable-syscohada">
+      {PLAN_COMPTABLE_SYSCOHADA.map((cl) => (
+        <optgroup key={cl.classe} label={cl.titre}>
+          {cl.comptes.map((c) => (
+            <option key={c.code} value={c.code}>{c.code} - {c.libelle}</option>
+          ))}
+        </optgroup>
+      ))}
+    </datalist>
+  );
+
   return (
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal-card" onClick={(e) => e.stopPropagation()}>
@@ -130,17 +143,23 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
               </select>
             </label>
 
-            {/* Debit & Credit accounts */}
+            {/* Debit & Credit accounts (plan comptable SYSCOHADA) */}
+            {accountsDatalist}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
               <label>
                 Compte à débiter *
                 <input
                   type="text"
+                  list="plan-comptable-syscohada"
                   value={debitAccount}
-                  onChange={(e) => setDebitAccount(e.target.value)}
-                  placeholder="Ex: 6061 (Energie)"
+                  onChange={(e) => setDebitAccount(e.target.value.split(' - ')[0].trim())}
+                  placeholder="Tapez un code ou un nom"
                   disabled={isSubmitting}
+                  autoComplete="off"
                 />
+                {debitAccount && libelleCompte(debitAccount) && (
+                  <span style={{ color: '#059669', fontSize: '0.8rem', marginTop: '2px', display: 'block' }}>{libelleCompte(debitAccount)}</span>
+                )}
                 {errors.debitAccount && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.debitAccount}</span>}
               </label>
 
@@ -148,11 +167,16 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
                 Compte à créditer *
                 <input
                   type="text"
+                  list="plan-comptable-syscohada"
                   value={creditAccount}
-                  onChange={(e) => setCreditAccount(e.target.value)}
-                  placeholder="Ex: 5211 (Banque)"
+                  onChange={(e) => setCreditAccount(e.target.value.split(' - ')[0].trim())}
+                  placeholder="Tapez un code ou un nom"
                   disabled={isSubmitting}
+                  autoComplete="off"
                 />
+                {creditAccount && libelleCompte(creditAccount) && (
+                  <span style={{ color: '#059669', fontSize: '0.8rem', marginTop: '2px', display: 'block' }}>{libelleCompte(creditAccount)}</span>
+                )}
                 {errors.creditAccount && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.creditAccount}</span>}
               </label>
             </div>

@@ -5,7 +5,10 @@ export interface InvoiceData {
   clientId: string;
   date: string;
   dueDate: string;
-  amount: number;
+  amountHt: number;
+  vatRate: number;
+  vatAmount: number;
+  amount: number; // TTC
   description: string;
   status: 'draft' | 'sent' | 'paid' | 'overdue';
 }
@@ -18,15 +21,26 @@ interface InvoiceModalProps {
   initialData?: Partial<InvoiceData>;
 }
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+const formatFcfa = (value: number) => `${value.toLocaleString('fr-FR')} FCFA`;
+
 export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialData }: InvoiceModalProps) {
   const [clientId, setClientId] = useState(initialData?.clientId || '');
   const [date, setDate] = useState(initialData?.date || new Date().toISOString().split('T')[0]);
   const [dueDate, setDueDate] = useState(initialData?.dueDate || '');
-  const [amount, setAmount] = useState(initialData?.amount ? String(initialData.amount) : '');
+  const [amountHt, setAmountHt] = useState(
+    initialData?.amountHt ? String(initialData.amountHt) : initialData?.amount ? String(initialData.amount) : ''
+  );
+  const [vatRate, setVatRate] = useState<string>(initialData?.vatRate != null ? String(initialData.vatRate) : '18');
   const [description, setDescription] = useState(initialData?.description || '');
   const [status, setStatus] = useState<'draft' | 'sent' | 'paid' | 'overdue'>(initialData?.status || 'draft');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  const htValue = parseFloat(amountHt) || 0;
+  const rateValue = parseFloat(vatRate) || 0;
+  const vatValue = round2(htValue * (rateValue / 100));
+  const ttcValue = round2(htValue + vatValue);
 
   const validate = (): boolean => {
     const newErrors: Record<string, string> = {};
@@ -34,8 +48,8 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
     if (!clientId) newErrors.clientId = 'Client requis';
     if (!date) newErrors.date = 'Date requise';
     if (!dueDate) newErrors.dueDate = 'Date d\'échéance requise';
-    if (!amount || isNaN(parseFloat(amount)) || parseFloat(amount) <= 0) {
-      newErrors.amount = 'Montant valide requis';
+    if (!amountHt || Number.isNaN(htValue) || htValue <= 0) {
+      newErrors.amountHt = 'Montant HT valide requis';
     }
 
     setErrors(newErrors);
@@ -53,7 +67,10 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
         clientId,
         date,
         dueDate,
-        amount: parseFloat(amount),
+        amountHt: htValue,
+        vatRate: rateValue,
+        vatAmount: vatValue,
+        amount: ttcValue,
         description,
         status,
       });
@@ -77,7 +94,7 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
 
         <form onSubmit={handleSubmit}>
           <div className="modal-body">
-            {initialData && (
+            {initialData && (initialData.amount || initialData.amountHt) && (
               <div className="import-hint">
                 Champs pre-remplis depuis le document importe. Verifiez-les avant d'enregistrer.
               </div>
@@ -128,19 +145,37 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
               </label>
             </div>
 
-            {/* Amount */}
-            <label>
-              Montant total (FCFA) *
-              <input
-                type="number"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                placeholder="Ex: 100000"
-                disabled={isSubmitting}
-                step="100"
-              />
-              {errors.amount && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.amount}</span>}
-            </label>
+            {/* Montant HT + TVA */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <label>
+                Montant HT (FCFA) *
+                <input
+                  type="number"
+                  value={amountHt}
+                  onChange={(e) => setAmountHt(e.target.value)}
+                  placeholder="Ex: 100000"
+                  disabled={isSubmitting}
+                  step="100"
+                />
+                {errors.amountHt && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.amountHt}</span>}
+              </label>
+
+              <label>
+                Taux de TVA
+                <select value={vatRate} onChange={(e) => setVatRate(e.target.value)} disabled={isSubmitting}>
+                  <option value="18">18% (taux normal Congo)</option>
+                  <option value="5">5% (taux reduit)</option>
+                  <option value="0">0% (exoneree)</option>
+                </select>
+              </label>
+            </div>
+
+            {/* Recap HT / TVA / TTC */}
+            <div className="parsed-box">
+              <p><strong>Montant HT :</strong> {formatFcfa(htValue)}</p>
+              <p><strong>TVA ({rateValue}%) :</strong> {formatFcfa(vatValue)}</p>
+              <p><strong>Total TTC :</strong> {formatFcfa(ttcValue)}</p>
+            </div>
 
             {/* Status */}
             <label>

@@ -7,6 +7,7 @@ import { ArchiveManager } from './components/ArchiveManager';
 import { AccountingEntryModal, AccountingEntryData } from './components/AccountingEntryModal';
 import { ClientModal, ClientData } from './components/ClientModal';
 import { InvoiceModal, InvoiceData } from './components/InvoiceModal';
+import PrimaryButton from './components/PrimaryButton';
 import { EventModal, EventData } from './components/EventModal';
 import { ReportModal, ReportData } from './components/ReportModal';
 import { NotificationModal, NotificationData } from './components/NotificationModal';
@@ -15,6 +16,14 @@ import NotificationToast from './components/NotificationToast';
 import AuthService from './services/authService';
 import { parseAppointmentText, parseQuickEntry, parseInvoiceFromFile } from './utils/helpers';
 import { exportTableToCsv } from './utils/csvExport';
+import { afficherCompte, classeDuCompte } from './data/planComptable';
+import {
+  calculerBalance,
+  totauxBalance,
+  calculerGrandLivre,
+  calculerCompteResultat,
+  calculerBilan,
+} from './utils/comptaReports';
 import {
   type EntryRecord,
   type ClientRecord,
@@ -22,12 +31,18 @@ import {
   type EventRecord,
   type ReportRecord,
   type NotificationRecord,
+  type PaymentRecord,
   listClients,
   createClient,
   listInvoices,
   createInvoice,
   listAccountingEntries,
   createAccountingEntry,
+  reverseAccountingEntry,
+  setEntryReconciled,
+  listPayments,
+  createPayment,
+  updateInvoiceStatus,
   listEvents,
   createEvent,
   listReports,
@@ -142,8 +157,13 @@ function App() {
   const [events, setEvents] = useState<EventRecord[]>([]);
   const [reports, setReports] = useState<ReportRecord[]>([]);
   const [notifications, setNotifications] = useState<NotificationRecord[]>([]);
+  const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [isDataLoading, setIsDataLoading] = useState(false);
   const [selectedExercise, setSelectedExercise] = useState<number>(new Date().getFullYear());
+  const [comptaTab, setComptaTab] = useState<'journal' | 'grandlivre' | 'balance' | 'etats'>('journal');
+  const [paymentForInvoice, setPaymentForInvoice] = useState<InvoiceRecord | null>(null);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentMethod, setPaymentMethod] = useState('especes');
 
   const [toasts, setToasts] = useState<Array<{ id: string; message: string; type: 'success' | 'info' | 'error' }>>([]);
   const [invoiceInitialData, setInvoiceInitialData] = useState<Partial<InvoiceData> | undefined>(undefined);
@@ -202,16 +222,18 @@ function App() {
         listEvents(),
         listReports(),
         listNotifications(),
+        listPayments(),
       ]);
       if (!active) return;
 
-      const [clientsRes, invoicesRes, entriesRes, eventsRes, reportsRes, notificationsRes] = results;
+      const [clientsRes, invoicesRes, entriesRes, eventsRes, reportsRes, notificationsRes, paymentsRes] = results;
       if (clientsRes.status === 'fulfilled') setClientsList(clientsRes.value);
       if (invoicesRes.status === 'fulfilled') setInvoices(invoicesRes.value);
       if (entriesRes.status === 'fulfilled') setEntries(entriesRes.value);
       if (eventsRes.status === 'fulfilled') setEvents(eventsRes.value);
       if (reportsRes.status === 'fulfilled') setReports(reportsRes.value);
       if (notificationsRes.status === 'fulfilled') setNotifications(notificationsRes.value);
+      if (paymentsRes.status === 'fulfilled') setPayments(paymentsRes.value);
 
       const failed = results.some((r) => r.status === 'rejected');
       if (failed) {
@@ -339,6 +361,66 @@ function App() {
     }
   };
 
+  // Contre-passation d'une ecriture (au lieu de suppression, conforme aux regles comptables).
+  const handleReverseEntry = async (entry: EntryRecord) => {
+    try {
+      const { reversal, original } = await reverseAccountingEntry(entry);
+      setEntries((prev) => [reversal, ...prev.map((e) => (e.id === original.id ? original : e))]);
+      pushToast(`Ecriture "${entry.description}" contre-passee.`);
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
+  };
+
+  // Rapprochement bancaire : basculer l'etat rapproche d'une ecriture de tresorerie.
+  const handleToggleReconcile = async (entry: EntryRecord) => {
+    try {
+      const updated = await setEntryReconciled(entry.id, !entry.reconciled);
+      setEntries((prev) => prev.map((e) => (e.id === updated.id ? updated : e)));
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
+  };
+
+  // Solde du restant d'une facture = TTC - somme des paiements enregistres.
+  const paidForInvoice = (invoiceId: string) => payments.filter((p) => p.invoiceId === invoiceId).reduce((s, p) => s + p.amount, 0);
+
+  const handleRecordPayment = async () => {
+    if (!paymentForInvoice) return;
+    const amt = parseFloat(paymentAmount);
+    if (Number.isNaN(amt) || amt <= 0) {
+      pushToast('Montant de paiement invalide.', 'error');
+      return;
+    }
+    try {
+      const payment = await createPayment({
+        invoiceId: paymentForInvoice.id,
+        amount: amt,
+        paymentDate: new Date().toISOString().split('T')[0],
+        method: paymentMethod,
+      });
+      const newPayments = [payment, ...payments];
+      setPayments(newPayments);
+
+      // Statut automatique : solde nul => payee ; partiel => envoyee (en cours).
+      const totalPaid = newPayments.filter((p) => p.invoiceId === paymentForInvoice.id).reduce((s, p) => s + p.amount, 0);
+      let newStatus = paymentForInvoice.status;
+      if (totalPaid >= paymentForInvoice.amount) newStatus = 'paid';
+      else if (totalPaid > 0 && paymentForInvoice.status !== 'overdue') newStatus = 'sent';
+      if (newStatus !== paymentForInvoice.status) {
+        await updateInvoiceStatus(paymentForInvoice.id, newStatus);
+        setInvoices((prev) => prev.map((i) => (i.id === paymentForInvoice.id ? { ...i, status: newStatus } : i)));
+      }
+
+      pushToast(`Paiement de ${amt.toLocaleString('fr-FR')} FCFA enregistre.`);
+      setPaymentForInvoice(null);
+      setPaymentAmount('');
+      setPaymentMethod('especes');
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
+  };
+
   // Exercice comptable SYSCOHADA/OHADA : annee civile (1er janvier - 31 decembre).
   // Les ecritures et factures sont filtrees par exercice selectionne pour que la
   // comptabilite, les factures et les rapports restent cloisonnes annee par annee.
@@ -365,8 +447,10 @@ function App() {
 
   const totalMovements = entriesForExercise.reduce((sum, e) => sum + e.amount, 0);
   const totalInvoiced = invoicesForExercise.reduce((sum, i) => sum + i.amount, 0);
-  const totalPaid = invoicesForExercise.filter((i) => i.status === 'paid').reduce((sum, i) => sum + i.amount, 0);
-  const totalOverdue = invoicesForExercise.filter((i) => i.status === 'overdue').length;
+  const totalVatCollected = invoicesForExercise.reduce((sum, i) => sum + i.vatAmount, 0);
+  const invoiceIdsForExercise = useMemo(() => new Set(invoicesForExercise.map((i) => i.id)), [invoicesForExercise]);
+  const totalEncaisse = payments.filter((p) => invoiceIdsForExercise.has(p.invoiceId)).reduce((sum, p) => sum + p.amount, 0);
+  const totalOutstanding = Math.max(0, totalInvoiced - totalEncaisse);
 
   const categoryBreakdown = useMemo(() => {
     const totals = new Map<string, number>();
@@ -378,6 +462,18 @@ function App() {
       .map(([category, amount]) => ({ category, amount, pct: grandTotal ? Math.round((amount / grandTotal) * 100) : 0 }))
       .sort((a, b) => b.amount - a.amount);
   }, [entriesForExercise]);
+
+  // Etats comptables SYSCOHADA calcules sur l'exercice selectionne.
+  const balance = useMemo(() => calculerBalance(entriesForExercise), [entriesForExercise]);
+  const balanceTotals = useMemo(() => totauxBalance(balance), [balance]);
+  const grandLivre = useMemo(() => calculerGrandLivre(entriesForExercise), [entriesForExercise]);
+  const compteResultat = useMemo(() => calculerCompteResultat(entriesForExercise), [entriesForExercise]);
+  const bilan = useMemo(() => calculerBilan(entriesForExercise), [entriesForExercise]);
+  // Comptes de tresorerie (classe 5) pour le rapprochement bancaire.
+  const treasuryEntries = useMemo(
+    () => entriesForExercise.filter((e) => classeDuCompte(e.debitAccount) === 5 || classeDuCompte(e.creditAccount) === 5),
+    [entriesForExercise]
+  );
 
   const systemNotifications = useMemo(() => {
     const list: Array<{ id: string; title: string; message: string; date: string; tone: 'orange' | 'red' | 'blue' }> = [];
@@ -441,115 +537,267 @@ function App() {
               </select>
             </div>
 
-            <div className="skpi-row">
-              <div className="skpi-card">
-                <span className="skpi-icon" style={{ background: 'rgba(79,70,229,0.14)' }}>Σ</span>
-                <div><p>Total mouvemente</p><strong>{formatFcfa(totalMovements)}</strong></div>
-              </div>
-              <div className="skpi-card">
-                <span className="skpi-icon" style={{ background: 'rgba(16,185,129,0.14)' }}>#</span>
-                <div><p>Ecritures {selectedExercise}</p><strong>{entriesForExercise.length}</strong></div>
-              </div>
-              <div className="skpi-card">
-                <span className="skpi-icon" style={{ background: 'rgba(6,182,212,0.14)' }}>✓</span>
-                <div><p>Equilibre debit/credit</p><strong>Garanti</strong></div>
-              </div>
+            <div className="tab-bar">
+              <button type="button" className={`tab-btn ${comptaTab === 'journal' ? 'active' : ''}`} onClick={() => setComptaTab('journal')}>Journal</button>
+              <button type="button" className={`tab-btn ${comptaTab === 'grandlivre' ? 'active' : ''}`} onClick={() => setComptaTab('grandlivre')}>Grand Livre</button>
+              <button type="button" className={`tab-btn ${comptaTab === 'balance' ? 'active' : ''}`} onClick={() => setComptaTab('balance')}>Balance</button>
+              <button type="button" className={`tab-btn ${comptaTab === 'etats' ? 'active' : ''}`} onClick={() => setComptaTab('etats')}>Bilan & Resultat</button>
             </div>
 
-            <article className="panel-card">
-              <div className="panel-top">
-                <h4>Journal comptable OHADA - Exercice {selectedExercise}</h4>
-                <div className="panel-top-actions">
-                  <span>Partie double - ecritures reelles</span>
-                  {entriesForExercise.length > 0 && (
-                    <>
-                      <button
-                        type="button"
-                        className="ghost-btn small-btn"
-                        onClick={() => exportTableToCsv({
-                          columns: ['Date', 'Libelle', 'Compte debite', 'Compte credite', 'Categorie', 'Montant'],
-                          rows: entriesForExercise.map((e) => [formatDate(e.date), e.description, e.debitAccount, e.creditAccount, e.category, e.amount]),
-                          fileName: `journal-comptable-vpns-${selectedExercise}.csv`,
-                        })}
-                      >
-                        CSV
-                      </button>
-                      <button
-                        type="button"
-                        className="ghost-btn small-btn"
-                        onClick={async () => {
-                          const { exportTableToPdf } = await import('./utils/pdfExport');
-                          exportTableToPdf({
-                            title: `Journal comptable OHADA - Exercice ${selectedExercise}`,
-                            subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${entriesForExercise.length} ecriture(s)`,
-                            columns: ['Date', 'Libelle', 'Debit', 'Credit', 'Categorie', 'Montant'],
-                            rows: entriesForExercise.map((e) => [formatDate(e.date), e.description, e.debitAccount, e.creditAccount, e.category, formatFcfa(e.amount)]),
-                            fileName: `journal-comptable-vpns-${selectedExercise}.pdf`,
-                            summary: [
-                              { label: 'Total mouvemente', value: formatFcfa(totalMovements) },
-                              { label: 'Ecritures', value: String(entriesForExercise.length) },
-                            ],
-                          });
-                        }}
-                      >
-                        Exporter PDF
-                      </button>
-                    </>
-                  )}
+            {comptaTab === 'journal' && (
+              <>
+                <div className="skpi-row">
+                  <div className="skpi-card">
+                    <span className="skpi-icon" style={{ background: 'rgba(79,70,229,0.14)' }}>Σ</span>
+                    <div><p>Total mouvemente</p><strong>{formatFcfa(totalMovements)}</strong></div>
+                  </div>
+                  <div className="skpi-card">
+                    <span className="skpi-icon" style={{ background: 'rgba(16,185,129,0.14)' }}>#</span>
+                    <div><p>Ecritures {selectedExercise}</p><strong>{entriesForExercise.length}</strong></div>
+                  </div>
+                  <div className="skpi-card">
+                    <span className="skpi-icon" style={{ background: balanceTotals.equilibre ? 'rgba(6,182,212,0.14)' : 'rgba(239,68,68,0.14)' }}>✓</span>
+                    <div><p>Equilibre debit/credit</p><strong>{balanceTotals.equilibre ? 'Equilibre' : 'A verifier'}</strong></div>
+                  </div>
                 </div>
-              </div>
-              {entriesForExercise.length === 0 ? (
-                <EmptyState
-                  title={`Aucune ecriture sur l'exercice ${selectedExercise}`}
-                  description="Ajoutez une ecriture ou changez d'exercice comptable ci-dessus."
-                />
-              ) : (
-                <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Libelle</th>
-                      <th>Compte debite</th>
-                      <th>Compte credite</th>
-                      <th>Categorie</th>
-                      <th>Montant</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {entriesForExercise.map((entry) => (
-                      <tr key={entry.id}>
-                        <td>{formatDate(entry.date)}</td>
-                        <td>{entry.description}</td>
-                        <td>{entry.debitAccount}</td>
-                        <td>{entry.creditAccount}</td>
-                        <td>{entry.category}</td>
-                        <td>{formatFcfa(entry.amount)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                </div>
-              )}
-            </article>
 
-            <article className="panel-card">
-              <div className="panel-top">
-                <h4>Saisie rapide intelligente</h4>
-                <span>Analyse du texte libre</span>
-              </div>
-              <input
-                value={quickText}
-                onChange={(e) => setQuickText(e.target.value)}
-                placeholder="Ex: payer EEC 53390"
-              />
-              <div className="parsed-box">
-                <p><strong>Montant :</strong> {parsedEntry.amount ? formatFcfa(parsedEntry.amount) : 'Non detecte'}</p>
-                <p><strong>Categorie :</strong> {parsedEntry.category}</p>
-                <p><strong>Compte :</strong> {parsedEntry.account}</p>
-                <p><strong>Type :</strong> {parsedEntry.type}</p>
-              </div>
-            </article>
+                <article className="panel-card">
+                  <div className="panel-top">
+                    <h4>Journal comptable OHADA - Exercice {selectedExercise}</h4>
+                    <div className="panel-top-actions">
+                      <span>Partie double</span>
+                      {entriesForExercise.length > 0 && (
+                        <>
+                          <button type="button" className="ghost-btn small-btn" onClick={() => exportTableToCsv({
+                            columns: ['Date', 'Libelle', 'Compte debite', 'Compte credite', 'Categorie', 'Montant'],
+                            rows: entriesForExercise.map((e) => [formatDate(e.date), e.description, afficherCompte(e.debitAccount), afficherCompte(e.creditAccount), e.category, e.amount]),
+                            fileName: `journal-comptable-vpns-${selectedExercise}.csv`,
+                          })}>CSV</button>
+                          <button type="button" className="ghost-btn small-btn" onClick={async () => {
+                            const { exportTableToPdf } = await import('./utils/pdfExport');
+                            exportTableToPdf({
+                              title: `Journal comptable OHADA - Exercice ${selectedExercise}`,
+                              subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${entriesForExercise.length} ecriture(s)`,
+                              columns: ['Date', 'Libelle', 'Debit', 'Credit', 'Montant'],
+                              rows: entriesForExercise.map((e) => [formatDate(e.date), e.description, afficherCompte(e.debitAccount), afficherCompte(e.creditAccount), formatFcfa(e.amount)]),
+                              fileName: `journal-comptable-vpns-${selectedExercise}.pdf`,
+                              summary: [{ label: 'Total mouvemente', value: formatFcfa(totalMovements) }, { label: 'Ecritures', value: String(entriesForExercise.length) }],
+                            });
+                          }}>Exporter PDF</button>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  {entriesForExercise.length === 0 ? (
+                    <EmptyState title={`Aucune ecriture sur l'exercice ${selectedExercise}`} description="Ajoutez une ecriture ou changez d'exercice comptable ci-dessus." />
+                  ) : (
+                    <div className="table-scroll">
+                    <table>
+                      <thead>
+                        <tr><th>Date</th><th>Libelle</th><th>Compte debite</th><th>Compte credite</th><th>Montant</th><th>Actions</th></tr>
+                      </thead>
+                      <tbody>
+                        {entriesForExercise.map((entry) => (
+                          <tr key={entry.id} className={entry.reversed ? 'row-reversed' : ''}>
+                            <td>{formatDate(entry.date)}</td>
+                            <td>{entry.description}{entry.reversed && <span className="chip red" style={{ marginLeft: 6 }}>Contre-passee</span>}{entry.reversesEntryId && <span className="chip orange" style={{ marginLeft: 6 }}>Annulation</span>}</td>
+                            <td title={afficherCompte(entry.debitAccount)}>{afficherCompte(entry.debitAccount)}</td>
+                            <td title={afficherCompte(entry.creditAccount)}>{afficherCompte(entry.creditAccount)}</td>
+                            <td>{formatFcfa(entry.amount)}</td>
+                            <td>
+                              {!entry.reversed && !entry.reversesEntryId && (
+                                <button type="button" className="ghost-btn small-btn" onClick={() => handleReverseEntry(entry)}>Contre-passer</button>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    </div>
+                  )}
+                </article>
+
+                <article className="panel-card">
+                  <div className="panel-top"><h4>Rapprochement bancaire</h4><span>Comptes de tresorerie (classe 5)</span></div>
+                  {treasuryEntries.length === 0 ? (
+                    <p className="chart-empty-hint">Aucun mouvement de tresorerie sur cet exercice. Les ecritures touchant un compte de banque ou de caisse apparaitront ici pour pointage.</p>
+                  ) : (
+                    <div className="table-scroll">
+                    <table>
+                      <thead><tr><th>Date</th><th>Libelle</th><th>Montant</th><th>Rapproche</th></tr></thead>
+                      <tbody>
+                        {treasuryEntries.map((entry) => (
+                          <tr key={entry.id}>
+                            <td>{formatDate(entry.date)}</td>
+                            <td>{entry.description}</td>
+                            <td>{formatFcfa(entry.amount)}</td>
+                            <td>
+                              <label className="reconcile-check">
+                                <input type="checkbox" checked={entry.reconciled} onChange={() => handleToggleReconcile(entry)} />
+                                <span>{entry.reconciled ? 'Pointe' : 'A pointer'}</span>
+                              </label>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    </div>
+                  )}
+                </article>
+
+                <article className="panel-card">
+                  <div className="panel-top"><h4>Saisie rapide intelligente</h4><span>Analyse du texte libre</span></div>
+                  <input value={quickText} onChange={(e) => setQuickText(e.target.value)} placeholder="Ex: payer EEC 53390" />
+                  <div className="parsed-box">
+                    <p><strong>Montant :</strong> {parsedEntry.amount ? formatFcfa(parsedEntry.amount) : 'Non detecte'}</p>
+                    <p><strong>Categorie :</strong> {parsedEntry.category}</p>
+                    <p><strong>Compte suggere :</strong> {afficherCompte(parsedEntry.account)}</p>
+                  </div>
+                </article>
+              </>
+            )}
+
+            {comptaTab === 'grandlivre' && (
+              <article className="panel-card">
+                <div className="panel-top">
+                  <h4>Grand Livre - Exercice {selectedExercise}</h4>
+                  <span>{grandLivre.length} compte(s) mouvemente(s)</span>
+                </div>
+                {grandLivre.length === 0 ? (
+                  <p className="chart-empty-hint">Aucun mouvement a afficher. Saisissez des ecritures dans le journal.</p>
+                ) : (
+                  grandLivre.map((cpt) => (
+                    <div key={cpt.compte} className="grandlivre-compte">
+                      <div className="grandlivre-head">
+                        <strong>{afficherCompte(cpt.compte)}</strong>
+                        <span>Solde : {formatFcfa(cpt.solde)}</span>
+                      </div>
+                      <div className="table-scroll">
+                      <table>
+                        <thead><tr><th>Date</th><th>Libelle</th><th>Debit</th><th>Credit</th><th>Solde</th></tr></thead>
+                        <tbody>
+                          {cpt.mouvements.map((m, i) => (
+                            <tr key={i}>
+                              <td>{formatDate(m.date)}</td>
+                              <td>{m.description}</td>
+                              <td>{m.debit ? formatFcfa(m.debit) : '-'}</td>
+                              <td>{m.credit ? formatFcfa(m.credit) : '-'}</td>
+                              <td>{formatFcfa(m.soldeProgressif)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </article>
+            )}
+
+            {comptaTab === 'balance' && (
+              <article className="panel-card">
+                <div className="panel-top">
+                  <h4>Balance generale - Exercice {selectedExercise}</h4>
+                  <div className="panel-top-actions">
+                    <span className={balanceTotals.equilibre ? 'chip green' : 'chip red'}>{balanceTotals.equilibre ? 'Equilibree' : 'Desequilibree'}</span>
+                    {balance.length > 0 && (
+                      <button type="button" className="ghost-btn small-btn" onClick={() => exportTableToCsv({
+                        columns: ['Compte', 'Libelle', 'Total debit', 'Total credit', 'Solde debiteur', 'Solde crediteur'],
+                        rows: balance.map((l) => [l.compte, l.libelle, l.totalDebit, l.totalCredit, l.soldeDebiteur, l.soldeCrediteur]),
+                        fileName: `balance-vpns-${selectedExercise}.csv`,
+                      })}>CSV</button>
+                    )}
+                  </div>
+                </div>
+                {balance.length === 0 ? (
+                  <p className="chart-empty-hint">Aucun compte mouvemente sur cet exercice.</p>
+                ) : (
+                  <div className="table-scroll">
+                  <table>
+                    <thead><tr><th>Compte</th><th>Total debit</th><th>Total credit</th><th>Solde debiteur</th><th>Solde crediteur</th></tr></thead>
+                    <tbody>
+                      {balance.map((l) => (
+                        <tr key={l.compte}>
+                          <td title={l.libelle}>{afficherCompte(l.compte)}</td>
+                          <td>{formatFcfa(l.totalDebit)}</td>
+                          <td>{formatFcfa(l.totalCredit)}</td>
+                          <td>{l.soldeDebiteur ? formatFcfa(l.soldeDebiteur) : '-'}</td>
+                          <td>{l.soldeCrediteur ? formatFcfa(l.soldeCrediteur) : '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr>
+                        <td><strong>TOTAUX</strong></td>
+                        <td><strong>{formatFcfa(balanceTotals.totalDebit)}</strong></td>
+                        <td><strong>{formatFcfa(balanceTotals.totalCredit)}</strong></td>
+                        <td><strong>{formatFcfa(balanceTotals.totalSoldeDebiteur)}</strong></td>
+                        <td><strong>{formatFcfa(balanceTotals.totalSoldeCrediteur)}</strong></td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                  </div>
+                )}
+              </article>
+            )}
+
+            {comptaTab === 'etats' && (
+              <>
+                <article className="panel-card">
+                  <div className="panel-top">
+                    <h4>Compte de resultat - Exercice {selectedExercise}</h4>
+                    <span className={compteResultat.resultat >= 0 ? 'chip green' : 'chip red'}>
+                      {compteResultat.resultat >= 0 ? 'Benefice' : 'Perte'} : {formatFcfa(Math.abs(compteResultat.resultat))}
+                    </span>
+                  </div>
+                  <div className="etats-grid">
+                    <div>
+                      <h5 className="etats-col-title">Produits (classe 7)</h5>
+                      {compteResultat.produits.length === 0 ? <p className="chart-empty-hint">Aucun produit.</p> : compteResultat.produits.map((p) => (
+                        <div className="etats-row" key={p.compte}><span title={p.libelle}>{afficherCompte(p.compte)}</span><strong>{formatFcfa(p.montant)}</strong></div>
+                      ))}
+                      <div className="etats-row total"><span>Total produits</span><strong>{formatFcfa(compteResultat.totalProduits)}</strong></div>
+                    </div>
+                    <div>
+                      <h5 className="etats-col-title">Charges (classe 6)</h5>
+                      {compteResultat.charges.length === 0 ? <p className="chart-empty-hint">Aucune charge.</p> : compteResultat.charges.map((c) => (
+                        <div className="etats-row" key={c.compte}><span title={c.libelle}>{afficherCompte(c.compte)}</span><strong>{formatFcfa(c.montant)}</strong></div>
+                      ))}
+                      <div className="etats-row total"><span>Total charges</span><strong>{formatFcfa(compteResultat.totalCharges)}</strong></div>
+                    </div>
+                  </div>
+                  <div className="etats-resultat">
+                    Resultat de l'exercice : <strong>{formatFcfa(compteResultat.resultat)}</strong>
+                  </div>
+                </article>
+
+                <article className="panel-card">
+                  <div className="panel-top">
+                    <h4>Bilan simplifie - Exercice {selectedExercise}</h4>
+                    <span className={Math.abs(bilan.totalActif - bilan.totalPassif) < 1 ? 'chip green' : 'chip orange'}>
+                      {Math.abs(bilan.totalActif - bilan.totalPassif) < 1 ? 'Equilibre' : 'A verifier'}
+                    </span>
+                  </div>
+                  <div className="etats-grid">
+                    <div>
+                      <h5 className="etats-col-title">ACTIF (ce que l'entreprise possede)</h5>
+                      {bilan.actif.length === 0 ? <p className="chart-empty-hint">Aucun element d'actif.</p> : bilan.actif.map((a) => (
+                        <div className="etats-row" key={a.compte}><span title={a.libelle}>{afficherCompte(a.compte)}</span><strong>{formatFcfa(a.montant)}</strong></div>
+                      ))}
+                      <div className="etats-row total"><span>Total actif</span><strong>{formatFcfa(bilan.totalActif)}</strong></div>
+                    </div>
+                    <div>
+                      <h5 className="etats-col-title">PASSIF (ressources et dettes)</h5>
+                      {bilan.passif.length === 0 ? <p className="chart-empty-hint">Aucun element de passif.</p> : bilan.passif.map((p, i) => (
+                        <div className="etats-row" key={`${p.compte}-${i}`}><span title={p.libelle}>{afficherCompte(p.compte)}</span><strong>{formatFcfa(p.montant)}</strong></div>
+                      ))}
+                      <div className="etats-row total"><span>Total passif</span><strong>{formatFcfa(bilan.totalPassif)}</strong></div>
+                    </div>
+                  </div>
+                  <p className="chart-empty-hint" style={{ marginTop: 10 }}>Presentation simplifiee adaptee TPE/PME. Le resultat de l'exercice figure au passif.</p>
+                </article>
+              </>
+            )}
           </section>
         );
 
@@ -568,15 +816,19 @@ function App() {
             <div className="skpi-row">
               <div className="skpi-card">
                 <span className="skpi-icon" style={{ background: 'rgba(79,70,229,0.14)' }}>Σ</span>
-                <div><p>Total facture</p><strong>{formatFcfa(totalInvoiced)}</strong></div>
+                <div><p>Total TTC facture</p><strong>{formatFcfa(totalInvoiced)}</strong></div>
               </div>
               <div className="skpi-card">
                 <span className="skpi-icon" style={{ background: 'rgba(16,185,129,0.14)' }}>✓</span>
-                <div><p>Encaisse</p><strong>{formatFcfa(totalPaid)}</strong></div>
+                <div><p>Encaisse (paiements)</p><strong>{formatFcfa(totalEncaisse)}</strong></div>
+              </div>
+              <div className="skpi-card">
+                <span className="skpi-icon" style={{ background: 'rgba(217,119,6,0.14)' }}>%</span>
+                <div><p>TVA collectee</p><strong>{formatFcfa(totalVatCollected)}</strong></div>
               </div>
               <div className="skpi-card">
                 <span className="skpi-icon" style={{ background: 'rgba(239,68,68,0.14)' }}>!</span>
-                <div><p>Impayees</p><strong>{totalOverdue}</strong></div>
+                <div><p>Reste a encaisser</p><strong>{formatFcfa(totalOutstanding)}</strong></div>
               </div>
             </div>
 
@@ -605,8 +857,11 @@ function App() {
                         type="button"
                         className="ghost-btn small-btn"
                         onClick={() => exportTableToCsv({
-                          columns: ['Numero', 'Client', 'Date', 'Echeance', 'Montant', 'Statut'],
-                          rows: invoicesForExercise.map((inv) => [inv.invoiceNumber, findClientLabel(inv.clientId), formatDate(inv.date), formatDate(inv.dueDate), inv.amount, invoiceStatusLabels[inv.status]]),
+                          columns: ['Numero', 'Client', 'Date', 'Echeance', 'HT', 'TVA', 'TTC', 'Regle', 'Solde', 'Statut'],
+                          rows: invoicesForExercise.map((inv) => {
+                            const paid = paidForInvoice(inv.id);
+                            return [inv.invoiceNumber, findClientLabel(inv.clientId), formatDate(inv.date), formatDate(inv.dueDate), inv.amountHt, inv.vatAmount, inv.amount, paid, inv.amount - paid, invoiceStatusLabels[inv.status]];
+                          }),
                           fileName: `factures-vpns-${selectedExercise}.csv`,
                         })}
                       >
@@ -620,13 +875,16 @@ function App() {
                           exportTableToPdf({
                             title: `Factures - Exercice ${selectedExercise}`,
                             subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${invoicesForExercise.length} facture(s)`,
-                            columns: ['Numero', 'Client', 'Date', 'Echeance', 'Montant', 'Statut'],
-                            rows: invoicesForExercise.map((inv) => [inv.invoiceNumber, findClientLabel(inv.clientId), formatDate(inv.date), formatDate(inv.dueDate), formatFcfa(inv.amount), invoiceStatusLabels[inv.status]]),
+                            columns: ['Numero', 'Client', 'Date', 'HT', 'TVA', 'TTC', 'Solde', 'Statut'],
+                            rows: invoicesForExercise.map((inv) => {
+                              const paid = paidForInvoice(inv.id);
+                              return [inv.invoiceNumber, findClientLabel(inv.clientId), formatDate(inv.date), formatFcfa(inv.amountHt), formatFcfa(inv.vatAmount), formatFcfa(inv.amount), formatFcfa(inv.amount - paid), invoiceStatusLabels[inv.status]];
+                            }),
                             fileName: `factures-vpns-${selectedExercise}.pdf`,
                             summary: [
-                              { label: 'Total facture', value: formatFcfa(totalInvoiced) },
-                              { label: 'Encaisse', value: formatFcfa(totalPaid) },
-                              { label: 'Impayees', value: String(totalOverdue) },
+                              { label: 'Total TTC', value: formatFcfa(totalInvoiced) },
+                              { label: 'TVA collectee', value: formatFcfa(totalVatCollected) },
+                              { label: 'Reste a encaisser', value: formatFcfa(totalOutstanding) },
                             ],
                           });
                         }}
@@ -650,35 +908,48 @@ function App() {
                       <th>Numero</th>
                       <th>Client</th>
                       <th>Date</th>
-                      <th>Echeance</th>
-                      <th>Montant</th>
+                      <th>HT</th>
+                      <th>TVA</th>
+                      <th>TTC</th>
+                      <th>Solde du</th>
                       <th>Statut</th>
-                      <th></th>
+                      <th>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {invoicesForExercise.map((invoice) => (
+                    {invoicesForExercise.map((invoice) => {
+                      const paid = paidForInvoice(invoice.id);
+                      const solde = invoice.amount - paid;
+                      return (
                       <tr key={invoice.id}>
                         <td>{invoice.invoiceNumber}</td>
                         <td>{findClientLabel(invoice.clientId)}</td>
                         <td>{formatDate(invoice.date)}</td>
-                        <td>{formatDate(invoice.dueDate)}</td>
+                        <td>{formatFcfa(invoice.amountHt)}</td>
+                        <td>{formatFcfa(invoice.vatAmount)} <span className="chip neutral" style={{ marginLeft: 4 }}>{invoice.vatRate}%</span></td>
                         <td>{formatFcfa(invoice.amount)}</td>
+                        <td>{solde > 0 ? <strong style={{ color: '#dc2626' }}>{formatFcfa(solde)}</strong> : <span className="chip green">Solde</span>}</td>
                         <td><span className={`chip ${invoiceStatusColors[invoice.status]}`}>{invoiceStatusLabels[invoice.status]}</span></td>
                         <td>
-                          <button
-                            type="button"
-                            className="ghost-btn small-btn"
-                            onClick={async () => {
-                              const { exportInvoiceToPdf } = await import('./utils/pdfExport');
-                              exportInvoiceToPdf(invoice, findClient(invoice.clientId));
-                            }}
-                          >
-                            PDF
-                          </button>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            {solde > 0 && (
+                              <button type="button" className="ghost-btn small-btn" onClick={() => { setPaymentForInvoice(invoice); setPaymentAmount(String(solde)); }}>Payer</button>
+                            )}
+                            <button
+                              type="button"
+                              className="ghost-btn small-btn"
+                              onClick={async () => {
+                                const { exportInvoiceToPdf } = await import('./utils/pdfExport');
+                                exportInvoiceToPdf(invoice, findClient(invoice.clientId));
+                              }}
+                            >
+                              PDF
+                            </button>
+                          </div>
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
                 </div>
@@ -1211,6 +1482,46 @@ function App() {
       )}
       {activeSection === 'notifications' && (
         <NotificationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={handleAddNotification} clients={clientsForSelect} />
+      )}
+
+      {paymentForInvoice && (
+        <div className="modal-backdrop" onClick={() => setPaymentForInvoice(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Reglement de facture</p>
+                <h3>Paiement {paymentForInvoice.invoiceNumber}</h3>
+              </div>
+              <button type="button" className="modal-close" onClick={() => setPaymentForInvoice(null)}>×</button>
+            </div>
+            <div className="modal-body">
+              <div className="parsed-box">
+                <p><strong>Client :</strong> {findClientLabel(paymentForInvoice.clientId)}</p>
+                <p><strong>Total TTC :</strong> {formatFcfa(paymentForInvoice.amount)}</p>
+                <p><strong>Deja regle :</strong> {formatFcfa(paidForInvoice(paymentForInvoice.id))}</p>
+                <p><strong>Solde du :</strong> {formatFcfa(paymentForInvoice.amount - paidForInvoice(paymentForInvoice.id))}</p>
+              </div>
+              <label>
+                Montant du paiement (FCFA) *
+                <input type="number" value={paymentAmount} onChange={(e) => setPaymentAmount(e.target.value)} step="100" placeholder="Ex: 50000" />
+              </label>
+              <label>
+                Mode de paiement
+                <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+                  <option value="especes">Especes</option>
+                  <option value="virement">Virement bancaire</option>
+                  <option value="cheque">Cheque</option>
+                  <option value="mobile_money">Mobile Money (MTN/Airtel)</option>
+                </select>
+              </label>
+              <p className="chart-empty-hint">Un paiement egal au solde passe automatiquement la facture en "Payee". Un paiement partiel la garde en cours.</p>
+              <div className="modal-actions">
+                <button type="button" className="secondary-btn" onClick={() => setPaymentForInvoice(null)}>Annuler</button>
+                <PrimaryButton onClick={handleRecordPayment}>Enregistrer le paiement</PrimaryButton>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       <div className="toast-stack">
