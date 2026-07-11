@@ -11,8 +11,10 @@
     
     <!-- PWA et manifeste -->
     <link rel="manifest" href="/manifest.json" />
-    <link rel="icon" type="image/svg+xml" href="/icons/icon-192x192.svg" />
-    <link rel="apple-touch-icon" href="/icons/icon-192x192.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/icons/favicon-32.png" />
+    <link rel="icon" type="image/png" sizes="64x64" href="/icons/favicon-64.png" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192x192.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/icons/apple-touch-icon.png" />
     
     <!-- Sécurité : la CSP complète (avec connect-src pour Supabase) est injectée par src/main.tsx.
          Une deuxième balise CSP ici serait cumulée (intersection), pas remplacée, et bloquerait
@@ -31,7 +33,7 @@
     <meta property="og:type" content="website" />
     <meta property="og:title" content="VPNS Consulting - Gestion Comptable" />
     <meta property="og:description" content="Plateforme de gestion comptable OHADA avec archivage par client" />
-    <meta property="og:image" content="/icons/icon-512x512.svg" />
+    <meta property="og:image" content="/icons/icon-512x512.png" />
     
     <!-- Page titre -->
     <title>VPNS Consulting - Gestion Comptable</title>
