@@ -358,6 +358,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
 .tab-btn { flex-shrink: 0; border: 1px solid var(--border); background: white; color: var(--muted); padding: 9px 16px; border-radius: 999px; cursor: pointer; font-weight: 600; font-size: 0.86rem; transition: all 160ms ease; }
 .tab-btn:hover { background: var(--surface-soft); }
 .tab-btn.active { background: linear-gradient(135deg, var(--primary), #6366f1); color: white; border-color: transparent; }
+.journal-filter { width: auto; margin: 0; padding: 6px 28px 6px 10px; border-radius: 999px; border: 1px solid var(--border); background: white; color: var(--text); font-size: 0.82rem; font-weight: 600; }
 
 /* Grand Livre */
 .grandlivre-compte { border: 1px solid var(--border); border-radius: 14px; margin-bottom: 12px; overflow: hidden; }

@@ -10,6 +10,7 @@ export interface AccountingEntryData {
   amount: number;
   reference?: string;
   category: string;
+  journal: 'ventes' | 'achats' | 'banque' | 'od';
 }
 
 interface AccountingEntryModalProps {
@@ -26,6 +27,7 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
   const [amount, setAmount] = useState('');
   const [reference, setReference] = useState('');
   const [category, setCategory] = useState('general');
+  const [journal, setJournal] = useState<'ventes' | 'achats' | 'banque' | 'od'>('od');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -64,6 +66,7 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
         amount: parseFloat(amount),
         reference: reference || undefined,
         category,
+        journal,
       });
     } finally {
       setIsSubmitting(false);
@@ -126,22 +129,33 @@ export function AccountingEntryModal({ isOpen, onClose, onSubmit }: AccountingEn
               {errors.description && <span style={{ color: '#e53e3e', fontSize: '0.85rem', marginTop: '4px', display: 'block' }}>{errors.description}</span>}
             </label>
 
-            {/* Category */}
-            <label>
-              Catégorie
-              <select
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                disabled={isSubmitting}
-              >
-                <option value="general">Générale</option>
-                <option value="achat">Achat</option>
-                <option value="vente">Vente</option>
-                <option value="depense">Dépense</option>
-                <option value="recette">Recette</option>
-                <option value="tresorerie">Trésorerie</option>
-              </select>
-            </label>
+            {/* Journal + Category */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+              <label>
+                Journal
+                <select value={journal} onChange={(e) => setJournal(e.target.value as 'ventes' | 'achats' | 'banque' | 'od')} disabled={isSubmitting}>
+                  <option value="od">Opérations diverses</option>
+                  <option value="ventes">Ventes</option>
+                  <option value="achats">Achats</option>
+                  <option value="banque">Banque / Caisse</option>
+                </select>
+              </label>
+              <label>
+                Catégorie
+                <select
+                  value={category}
+                  onChange={(e) => setCategory(e.target.value)}
+                  disabled={isSubmitting}
+                >
+                  <option value="general">Générale</option>
+                  <option value="achat">Achat</option>
+                  <option value="vente">Vente</option>
+                  <option value="depense">Dépense</option>
+                  <option value="recette">Recette</option>
+                  <option value="tresorerie">Trésorerie</option>
+                </select>
+              </label>
+            </div>
 
             {/* Debit & Credit accounts (plan comptable SYSCOHADA) */}
             {accountsDatalist}

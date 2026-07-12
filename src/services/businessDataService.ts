@@ -5,11 +5,12 @@ import type { AccountingEntryData } from '../components/AccountingEntryModal';
 import type { EventData } from '../components/EventModal';
 import type { ReportData } from '../components/ReportModal';
 import type { NotificationData } from '../components/NotificationModal';
+import { entriesForInvoice, entryForPayment, type GeneratedEntry } from '../utils/autoAccounting';
 
 export type WithId<T> = T & { id: string; createdAt: string };
 export type ClientRecord = WithId<ClientData>;
 export type InvoiceRecord = WithId<InvoiceData> & { invoiceNumber: string };
-export type EntryRecord = WithId<AccountingEntryData> & { reconciled: boolean; reversed: boolean; reversesEntryId?: string };
+export type EntryRecord = WithId<AccountingEntryData> & { reconciled: boolean; reversed: boolean; reversesEntryId?: string; sourceType?: string; sourceId?: string };
 export type EventRecord = WithId<EventData>;
 export type ReportRecord = WithId<ReportData>;
 export type NotificationRecord = WithId<NotificationData>;
@@ -105,6 +106,8 @@ function mapInvoiceRow(row: any): InvoiceRecord {
     amount,
     description: row.description || '',
     status: row.status,
+    type: row.type === 'achat' ? 'achat' : 'vente',
+    counterpartAccount: row.counterpart_account || undefined,
   };
 }
 
@@ -114,7 +117,9 @@ export async function listInvoices(): Promise<InvoiceRecord[]> {
   return (data || []).map(mapInvoiceRow);
 }
 
-export async function createInvoice(data: InvoiceData): Promise<InvoiceRecord> {
+// Cree la facture ET genere automatiquement les ecritures comptables dans le bon
+// journal (ventes ou achats). Retourne la facture + les ecritures generees.
+export async function createInvoice(data: InvoiceData): Promise<{ invoice: InvoiceRecord; entries: EntryRecord[] }> {
   const result = await supabase
     .from('invoices')
     .insert({
@@ -127,11 +132,46 @@ export async function createInvoice(data: InvoiceData): Promise<InvoiceRecord> {
       amount: data.amount,
       description: data.description || null,
       status: data.status,
+      type: data.type,
+      counterpart_account: data.counterpartAccount || null,
     })
     .select('*')
     .single();
   const row: any = unwrap(result, 'Creation de la facture');
-  return mapInvoiceRow(row);
+  const invoice = mapInvoiceRow(row);
+
+  const generated = entriesForInvoice({
+    type: invoice.type,
+    invoiceNumber: invoice.invoiceNumber,
+    date: invoice.date,
+    amountHt: invoice.amountHt,
+    vatAmount: invoice.vatAmount,
+    amount: invoice.amount,
+    counterpartAccount: invoice.counterpartAccount,
+  });
+  const entries = await persistGeneratedEntries(generated, 'invoice', invoice.id);
+
+  return { invoice, entries };
+}
+
+// Persiste des ecritures generees automatiquement (comptabilisation auto).
+async function persistGeneratedEntries(generated: GeneratedEntry[], sourceType: string, sourceId: string): Promise<EntryRecord[]> {
+  if (generated.length === 0) return [];
+  const rows = generated.map((g) => ({
+    entry_date: g.date,
+    description: g.description,
+    debit_account: g.debitAccount,
+    credit_account: g.creditAccount,
+    amount: g.amount,
+    category: g.category,
+    reference: g.reference || null,
+    journal: g.journal,
+    source_type: sourceType,
+    source_id: sourceId,
+  }));
+  const { data, error } = await supabase.from('accounting_entries').insert(rows).select('*');
+  if (error) throw new Error(`Comptabilisation automatique: ${error.message}`);
+  return (data || []).map(mapEntryRow);
 }
 
 // ═══════════════════════════════════════════
@@ -148,9 +188,12 @@ function mapEntryRow(row: any): EntryRecord {
     amount: Number(row.amount),
     category: row.category,
     reference: row.reference || undefined,
+    journal: (row.journal as EntryRecord['journal']) || 'od',
     reconciled: row.reconciled ?? false,
     reversed: row.reversed ?? false,
     reversesEntryId: row.reverses_entry_id || undefined,
+    sourceType: row.source_type || undefined,
+    sourceId: row.source_id || undefined,
   };
 }
 
@@ -171,6 +214,8 @@ export async function createAccountingEntry(data: AccountingEntryData): Promise<
       amount: data.amount,
       category: data.category,
       reference: data.reference || null,
+      journal: data.journal || 'od',
+      source_type: 'manual',
     })
     .select('*')
     .single();
@@ -191,6 +236,8 @@ export async function reverseAccountingEntry(entry: EntryRecord): Promise<{ reve
       amount: entry.amount,
       category: entry.category,
       reference: entry.reference || null,
+      journal: entry.journal || 'od',
+      source_type: 'manual',
       reverses_entry_id: entry.id,
     })
     .select('*')
@@ -241,11 +288,16 @@ export async function listPayments(): Promise<PaymentRecord[]> {
   return (data || []).map(mapPaymentRow);
 }
 
-export async function createPayment(input: { invoiceId: string; amount: number; paymentDate: string; method: string; note?: string }): Promise<PaymentRecord> {
+// Enregistre le paiement ET genere automatiquement l'ecriture de tresorerie
+// (journal banque). Retourne le paiement + l'ecriture generee.
+export async function createPayment(
+  invoice: InvoiceRecord,
+  input: { amount: number; paymentDate: string; method: string; note?: string }
+): Promise<{ payment: PaymentRecord; entry: EntryRecord | null }> {
   const result = await supabase
     .from('invoice_payments')
     .insert({
-      invoice_id: input.invoiceId,
+      invoice_id: invoice.id,
       amount: input.amount,
       payment_date: input.paymentDate,
       method: input.method,
@@ -254,7 +306,15 @@ export async function createPayment(input: { invoiceId: string; amount: number; 
     .select('*')
     .single();
   const row: any = unwrap(result, 'Enregistrement du paiement');
-  return mapPaymentRow(row);
+  const payment = mapPaymentRow(row);
+
+  const generated = entryForPayment(
+    { type: invoice.type, invoiceNumber: invoice.invoiceNumber, date: invoice.date, amountHt: invoice.amountHt, vatAmount: invoice.vatAmount, amount: invoice.amount, counterpartAccount: invoice.counterpartAccount },
+    { amount: payment.amount, method: payment.method, paymentDate: payment.paymentDate }
+  );
+  const entries = await persistGeneratedEntries([generated], 'payment', payment.id);
+
+  return { payment, entry: entries[0] || null };
 }
 
 // Met a jour le statut d'une facture (ex: passage a "paid" quand solde nul).

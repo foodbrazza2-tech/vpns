@@ -17,6 +17,7 @@ import AuthService from './services/authService';
 import { parseAppointmentText, parseQuickEntry, parseInvoiceFromFile } from './utils/helpers';
 import { exportTableToCsv } from './utils/csvExport';
 import { afficherCompte, classeDuCompte } from './data/planComptable';
+import { detectInvoiceType } from './utils/autoAccounting';
 import {
   calculerBalance,
   totauxBalance,
@@ -96,6 +97,13 @@ const notificationDotColors: Record<NotificationData['type'], string> = {
   info: 'blue',
 };
 
+const journalLabels: Record<string, string> = {
+  ventes: 'Ventes',
+  achats: 'Achats',
+  banque: 'Banque',
+  od: 'Op. diverses',
+};
+
 const makeId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
 const formatFcfa = (value: number) => `${value.toLocaleString('fr-FR')} FCFA`;
@@ -161,6 +169,7 @@ function App() {
   const [isDataLoading, setIsDataLoading] = useState(false);
   const [selectedExercise, setSelectedExercise] = useState<number>(new Date().getFullYear());
   const [comptaTab, setComptaTab] = useState<'journal' | 'grandlivre' | 'balance' | 'etats'>('journal');
+  const [journalFilter, setJournalFilter] = useState<'tous' | 'ventes' | 'achats' | 'banque' | 'od'>('tous');
   const [paymentForInvoice, setPaymentForInvoice] = useState<InvoiceRecord | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('especes');
@@ -263,19 +272,40 @@ function App() {
     setIsModalOpen(true);
   };
 
+  // Import / numerisation : l'app analyse le document, cree la facture ET
+  // comptabilise automatiquement (journal ventes ou achats), sans intervention.
   const handleImportInvoiceFile = async (file: File) => {
     setIsImportingInvoice(true);
     try {
       const parsed = await parseInvoiceFromFile(file);
-      openInvoiceModal({
-        amount: parsed.amount || undefined,
+      const detectedType = detectInvoiceType(`${file.name} ${parsed.description}`);
+      const ht = parsed.amount || 0;
+      if (ht <= 0) {
+        // Montant illisible : on ouvre le formulaire pre-rempli pour saisie manuelle.
+        openInvoiceModal({ type: detectedType, date: parsed.date, dueDate: parsed.dueDate, description: parsed.description });
+        pushToast(`Document importe mais montant illisible. Completez la facture.`, 'info');
+        return;
+      }
+      const vatRate = 18;
+      const vatAmount = Math.round(ht * (vatRate / 100) * 100) / 100;
+      const data: InvoiceData = {
+        clientId: '',
         date: parsed.date,
         dueDate: parsed.dueDate,
+        amountHt: ht,
+        vatRate,
+        vatAmount,
+        amount: Math.round((ht + vatAmount) * 100) / 100,
         description: parsed.description,
-      });
-      pushToast(`Facture importee depuis "${file.name}". Verifiez les champs avant d'enregistrer.`, 'info');
-    } catch {
-      pushToast("Impossible d'analyser ce fichier automatiquement.", 'error');
+        status: detectedType === 'vente' ? 'sent' : 'draft',
+        type: detectedType,
+      };
+      const { invoice, entries: generated } = await createInvoice(data);
+      setInvoices((prev) => [invoice, ...prev]);
+      setEntries((prev) => [...generated, ...prev]);
+      pushToast(`Facture ${invoice.invoiceNumber} importee et comptabilisee automatiquement (journal ${detectedType === 'vente' ? 'Ventes' : 'Achats'}).`);
+    } catch (err) {
+      pushToast((err as Error).message || "Impossible d'analyser ce fichier.", 'error');
     } finally {
       setIsImportingInvoice(false);
     }
@@ -318,11 +348,12 @@ function App() {
 
   const handleAddInvoice = async (data: InvoiceData) => {
     try {
-      const record = await createInvoice(data);
-      setInvoices((prev) => [record, ...prev]);
+      const { invoice, entries: generated } = await createInvoice(data);
+      setInvoices((prev) => [invoice, ...prev]);
+      setEntries((prev) => [...generated, ...prev]);
       setIsModalOpen(false);
       setInvoiceInitialData(undefined);
-      pushToast(`Facture ${record.invoiceNumber} creee.`);
+      pushToast(`Facture ${invoice.invoiceNumber} creee et comptabilisee (journal ${data.type === 'vente' ? 'Ventes' : 'Achats'}).`);
     } catch (err) {
       pushToast((err as Error).message, 'error');
     }
@@ -393,14 +424,14 @@ function App() {
       return;
     }
     try {
-      const payment = await createPayment({
-        invoiceId: paymentForInvoice.id,
+      const { payment, entry } = await createPayment(paymentForInvoice, {
         amount: amt,
         paymentDate: new Date().toISOString().split('T')[0],
         method: paymentMethod,
       });
       const newPayments = [payment, ...payments];
       setPayments(newPayments);
+      if (entry) setEntries((prev) => [entry, ...prev]);
 
       // Statut automatique : solde nul => payee ; partiel => envoyee (en cours).
       const totalPaid = newPayments.filter((p) => p.invoiceId === paymentForInvoice.id).reduce((s, p) => s + p.amount, 0);
@@ -412,7 +443,7 @@ function App() {
         setInvoices((prev) => prev.map((i) => (i.id === paymentForInvoice.id ? { ...i, status: newStatus } : i)));
       }
 
-      pushToast(`Paiement de ${amt.toLocaleString('fr-FR')} FCFA enregistre.`);
+      pushToast(`Paiement de ${amt.toLocaleString('fr-FR')} FCFA enregistre et comptabilise (journal Banque).`);
       setPaymentForInvoice(null);
       setPaymentAmount('');
       setPaymentMethod('especes');
@@ -438,6 +469,11 @@ function App() {
   const entriesForExercise = useMemo(
     () => entries.filter((e) => yearOf(e.date) === selectedExercise),
     [entries, selectedExercise]
+  );
+
+  const journalEntries = useMemo(
+    () => (journalFilter === 'tous' ? entriesForExercise : entriesForExercise.filter((e) => (e.journal || 'od') === journalFilter)),
+    [entriesForExercise, journalFilter]
   );
 
   const invoicesForExercise = useMemo(
@@ -565,42 +601,49 @@ function App() {
                   <div className="panel-top">
                     <h4>Journal comptable OHADA - Exercice {selectedExercise}</h4>
                     <div className="panel-top-actions">
-                      <span>Partie double</span>
-                      {entriesForExercise.length > 0 && (
+                      <select className="journal-filter" value={journalFilter} onChange={(e) => setJournalFilter(e.target.value as typeof journalFilter)}>
+                        <option value="tous">Tous les journaux</option>
+                        <option value="ventes">Journal des Ventes</option>
+                        <option value="achats">Journal des Achats</option>
+                        <option value="banque">Journal de Banque</option>
+                        <option value="od">Operations diverses</option>
+                      </select>
+                      {journalEntries.length > 0 && (
                         <>
                           <button type="button" className="ghost-btn small-btn" onClick={() => exportTableToCsv({
-                            columns: ['Date', 'Libelle', 'Compte debite', 'Compte credite', 'Categorie', 'Montant'],
-                            rows: entriesForExercise.map((e) => [formatDate(e.date), e.description, afficherCompte(e.debitAccount), afficherCompte(e.creditAccount), e.category, e.amount]),
+                            columns: ['Date', 'Journal', 'Libelle', 'Compte debite', 'Compte credite', 'Montant'],
+                            rows: journalEntries.map((e) => [formatDate(e.date), journalLabels[e.journal || 'od'], e.description, afficherCompte(e.debitAccount), afficherCompte(e.creditAccount), e.amount]),
                             fileName: `journal-comptable-vpns-${selectedExercise}.csv`,
                           })}>CSV</button>
                           <button type="button" className="ghost-btn small-btn" onClick={async () => {
                             const { exportTableToPdf } = await import('./utils/pdfExport');
                             exportTableToPdf({
                               title: `Journal comptable OHADA - Exercice ${selectedExercise}`,
-                              subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${entriesForExercise.length} ecriture(s)`,
-                              columns: ['Date', 'Libelle', 'Debit', 'Credit', 'Montant'],
-                              rows: entriesForExercise.map((e) => [formatDate(e.date), e.description, afficherCompte(e.debitAccount), afficherCompte(e.creditAccount), formatFcfa(e.amount)]),
+                              subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${journalEntries.length} ecriture(s)`,
+                              columns: ['Date', 'Journal', 'Libelle', 'Debit', 'Credit', 'Montant'],
+                              rows: journalEntries.map((e) => [formatDate(e.date), journalLabels[e.journal || 'od'], e.description, afficherCompte(e.debitAccount), afficherCompte(e.creditAccount), formatFcfa(e.amount)]),
                               fileName: `journal-comptable-vpns-${selectedExercise}.pdf`,
-                              summary: [{ label: 'Total mouvemente', value: formatFcfa(totalMovements) }, { label: 'Ecritures', value: String(entriesForExercise.length) }],
+                              summary: [{ label: 'Total mouvemente', value: formatFcfa(totalMovements) }, { label: 'Ecritures', value: String(journalEntries.length) }],
                             });
                           }}>Exporter PDF</button>
                         </>
                       )}
                     </div>
                   </div>
-                  {entriesForExercise.length === 0 ? (
-                    <EmptyState title={`Aucune ecriture sur l'exercice ${selectedExercise}`} description="Ajoutez une ecriture ou changez d'exercice comptable ci-dessus." />
+                  {journalEntries.length === 0 ? (
+                    <EmptyState title={`Aucune ecriture ${journalFilter !== 'tous' ? '(' + journalLabels[journalFilter] + ') ' : ''}sur l'exercice ${selectedExercise}`} description="Creez une facture ou une ecriture : la comptabilisation est automatique." />
                   ) : (
                     <div className="table-scroll">
                     <table>
                       <thead>
-                        <tr><th>Date</th><th>Libelle</th><th>Compte debite</th><th>Compte credite</th><th>Montant</th><th>Actions</th></tr>
+                        <tr><th>Date</th><th>Journal</th><th>Libelle</th><th>Compte debite</th><th>Compte credite</th><th>Montant</th><th>Actions</th></tr>
                       </thead>
                       <tbody>
-                        {entriesForExercise.map((entry) => (
+                        {journalEntries.map((entry) => (
                           <tr key={entry.id} className={entry.reversed ? 'row-reversed' : ''}>
                             <td>{formatDate(entry.date)}</td>
-                            <td>{entry.description}{entry.reversed && <span className="chip red" style={{ marginLeft: 6 }}>Contre-passee</span>}{entry.reversesEntryId && <span className="chip orange" style={{ marginLeft: 6 }}>Annulation</span>}</td>
+                            <td><span className="chip neutral">{journalLabels[entry.journal || 'od']}</span></td>
+                            <td>{entry.description}{entry.reversed && <span className="chip red" style={{ marginLeft: 6 }}>Contre-passee</span>}{entry.reversesEntryId && <span className="chip orange" style={{ marginLeft: 6 }}>Annulation</span>}{entry.sourceType && entry.sourceType !== 'manual' && <span className="chip green" style={{ marginLeft: 6 }}>Auto</span>}</td>
                             <td title={afficherCompte(entry.debitAccount)}>{afficherCompte(entry.debitAccount)}</td>
                             <td title={afficherCompte(entry.creditAccount)}>{afficherCompte(entry.creditAccount)}</td>
                             <td>{formatFcfa(entry.amount)}</td>

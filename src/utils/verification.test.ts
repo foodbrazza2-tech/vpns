@@ -16,6 +16,7 @@ const E = (date: string, debit: string, credit: string, amount: number, category
   creditAccount: credit,
   amount,
   category,
+  journal: 'od',
   reconciled: false,
   reversed: false,
 });

@@ -11,6 +11,8 @@ export interface InvoiceData {
   amount: number; // TTC
   description: string;
   status: 'draft' | 'sent' | 'paid' | 'overdue';
+  type: 'vente' | 'achat';
+  counterpartAccount?: string;
 }
 
 interface InvoiceModalProps {
@@ -24,6 +26,25 @@ interface InvoiceModalProps {
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const formatFcfa = (value: number) => `${value.toLocaleString('fr-FR')} FCFA`;
 
+// Comptes de produit (classe 7) et de charge (classe 6) usuels pour la contrepartie.
+const VENTE_ACCOUNTS = [
+  { code: '701', libelle: 'Ventes de marchandises' },
+  { code: '702', libelle: 'Ventes de produits finis' },
+  { code: '704', libelle: 'Ventes de travaux' },
+  { code: '705', libelle: 'Ventes de services' },
+  { code: '706', libelle: 'Services vendus (honoraires, commissions)' },
+  { code: '707', libelle: 'Produits accessoires' },
+];
+const ACHAT_ACCOUNTS = [
+  { code: '601', libelle: 'Achats de marchandises' },
+  { code: '602', libelle: 'Achats de matieres premieres' },
+  { code: '604', libelle: 'Achats stockes de fournitures' },
+  { code: '605', libelle: 'Autres achats (eau, electricite, fournitures)' },
+  { code: '622', libelle: 'Locations et charges locatives' },
+  { code: '624', libelle: 'Entretien et reparations' },
+  { code: '627', libelle: 'Publicite, relations publiques' },
+];
+
 export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialData }: InvoiceModalProps) {
   const [clientId, setClientId] = useState(initialData?.clientId || '');
   const [date, setDate] = useState(initialData?.date || new Date().toISOString().split('T')[0]);
@@ -34,6 +55,8 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
   const [vatRate, setVatRate] = useState<string>(initialData?.vatRate != null ? String(initialData.vatRate) : '18');
   const [description, setDescription] = useState(initialData?.description || '');
   const [status, setStatus] = useState<'draft' | 'sent' | 'paid' | 'overdue'>(initialData?.status || 'draft');
+  const [type, setType] = useState<'vente' | 'achat'>(initialData?.type || 'vente');
+  const [counterpartAccount, setCounterpartAccount] = useState(initialData?.counterpartAccount || '');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -73,6 +96,8 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
         amount: ttcValue,
         description,
         status,
+        type,
+        counterpartAccount: counterpartAccount || undefined,
       });
     } finally {
       setIsSubmitting(false);
@@ -100,17 +125,26 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
               </div>
             )}
 
-            <p className="import-hint">Le numéro de facture sera généré automatiquement (FAC-{new Date().getFullYear()}-NNN), sans doublon ni trou possible.</p>
+            <p className="import-hint">Le numéro de facture sera généré automatiquement (FAC-{new Date().getFullYear()}-NNN). L'écriture comptable sera <strong>enregistrée automatiquement</strong> dans le journal {type === 'vente' ? 'des Ventes' : 'des Achats'}.</p>
 
-            {/* Client Selection */}
+            {/* Type vente / achat */}
             <label>
-              Client *
+              Nature *
+              <select value={type} onChange={(e) => setType(e.target.value as 'vente' | 'achat')} disabled={isSubmitting}>
+                <option value="vente">Vente (facture client → journal Ventes)</option>
+                <option value="achat">Achat (facture fournisseur → journal Achats)</option>
+              </select>
+            </label>
+
+            {/* Client / Fournisseur Selection */}
+            <label>
+              {type === 'vente' ? 'Client' : 'Fournisseur'} *
               <select
                 value={clientId}
                 onChange={(e) => setClientId(e.target.value)}
                 disabled={isSubmitting}
               >
-                <option value="">-- Sélectionner un client --</option>
+                <option value="">-- Sélectionner {type === 'vente' ? 'un client' : 'un fournisseur'} --</option>
                 {clients.map((client) => (
                   <option key={client.id} value={client.id}>
                     {client.name}
@@ -169,6 +203,25 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
                 </select>
               </label>
             </div>
+
+            {/* Compte de produit (vente) ou de charge (achat) - optionnel */}
+            <label>
+              Compte {type === 'vente' ? 'de produit (vente)' : 'de charge (achat)'}
+              <input
+                type="text"
+                list="plan-comptable-syscohada-inv"
+                value={counterpartAccount}
+                onChange={(e) => setCounterpartAccount(e.target.value.split(' - ')[0].trim())}
+                placeholder={type === 'vente' ? 'Defaut: 706 (Services vendus)' : 'Defaut: 605 (Autres achats)'}
+                disabled={isSubmitting}
+                autoComplete="off"
+              />
+              <datalist id="plan-comptable-syscohada-inv">
+                {(type === 'vente' ? VENTE_ACCOUNTS : ACHAT_ACCOUNTS).map((c) => (
+                  <option key={c.code} value={c.code}>{c.code} - {c.libelle}</option>
+                ))}
+              </datalist>
+            </label>
 
             {/* Recap HT / TVA / TTC */}
             <div className="parsed-box">
