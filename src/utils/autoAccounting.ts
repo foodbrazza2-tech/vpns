@@ -26,6 +26,7 @@ export const COMPTE = {
   ACHAT_DEFAUT: '605', // Autres achats
   BANQUE: '5211', // Banque (compte principal)
   CAISSE: '5711', // Caisse
+  ATTENTE: '471', // Comptes d'attente (mouvement bancaire a reclasser)
 };
 
 // Compte de tresorerie selon le mode de reglement.
@@ -158,6 +159,103 @@ export function detectInvoiceType(text: string): 'vente' | 'achat' {
     return 'achat';
   }
   return 'vente';
+}
+
+export type DocumentKind = 'vente' | 'achat' | 'virement_bancaire' | 'versement' | 'retrait';
+
+// Classification plus large pour l'import de documents : un bordereau de
+// virement/versement/retrait/releve bancaire n'est pas une facture et doit
+// etre comptabilise directement en tresorerie plutot que force dans le
+// circuit facture. Versement/retrait sont verifies avant le cas general
+// "virement" (mots distincts, mais on privilegie la classification la plus
+// precise quand plusieurs mots-cles apparaissent sur le meme document).
+export function detectDocumentKind(text: string): DocumentKind {
+  const t = text.toLowerCase();
+  if (/\b(bordereau de versement|versement especes|depot especes|depot de fonds)\b/.test(t)) {
+    return 'versement';
+  }
+  if (/\b(bordereau de retrait|retrait especes|retrait de fonds)\b/.test(t)) {
+    return 'retrait';
+  }
+  if (/\b(bordereau de virement|virement bancaire|ordre de virement|releve bancaire|relev[ée] de compte|swift|iban)\b/.test(t)) {
+    return 'virement_bancaire';
+  }
+  return detectInvoiceType(text);
+}
+
+// Sens du mouvement pour un bordereau de virement : entrant (le compte est
+// credite) ou sortant (le compte est debite). Par defaut on suppose entrant
+// (encaissement), le cas le plus frequent pour un virement recu d'un client.
+export function detectTransferDirection(text: string): 'entrant' | 'sortant' {
+  const t = text.toLowerCase();
+  if (/\b(virement emis|debit|paiement envoye|ordre de paiement|beneficiaire)\b/.test(t)) {
+    return 'sortant';
+  }
+  return 'entrant';
+}
+
+// Ecriture pour un bordereau de virement bancaire importe sans facture liee.
+// Le contre-compte est le compte d'attente (471) : une ecriture bancaire sans
+// piece justificative rattachable ne doit jamais etre affectee directement a
+// un compte definitif - c'est a l'utilisateur de la reclasser ensuite, ce qui
+// est la pratique standard face a un mouvement bancaire non identifie.
+export function entryForBankTransfer(data: { date: string; amount: number; method: string; direction: 'entrant' | 'sortant'; description: string; reference?: string }): GeneratedEntry {
+  const tres = compteTresorerie(data.method);
+  const montant = round2(data.amount);
+  if (data.direction === 'entrant') {
+    return {
+      date: data.date,
+      description: data.description,
+      debitAccount: tres,
+      creditAccount: COMPTE.ATTENTE,
+      amount: montant,
+      category: 'tresorerie',
+      journal: 'banque',
+      reference: data.reference,
+    };
+  }
+  return {
+    date: data.date,
+    description: data.description,
+    debitAccount: COMPTE.ATTENTE,
+    creditAccount: tres,
+    amount: montant,
+    category: 'tresorerie',
+    journal: 'banque',
+    reference: data.reference,
+  };
+}
+
+// Bordereau de versement (especes -> banque) ou de retrait (banque -> especes) :
+// mouvement interne entierement determine des deux cotes, contrairement a un
+// virement externe - donc aucun compte d'attente necessaire ici.
+export function entryForCaisseBanqueTransfer(
+  kind: 'versement' | 'retrait',
+  data: { date: string; amount: number; description: string; reference?: string }
+): GeneratedEntry {
+  const montant = round2(data.amount);
+  if (kind === 'versement') {
+    return {
+      date: data.date,
+      description: data.description,
+      debitAccount: COMPTE.BANQUE,
+      creditAccount: COMPTE.CAISSE,
+      amount: montant,
+      category: 'tresorerie',
+      journal: 'banque',
+      reference: data.reference,
+    };
+  }
+  return {
+    date: data.date,
+    description: data.description,
+    debitAccount: COMPTE.CAISSE,
+    creditAccount: COMPTE.BANQUE,
+    amount: montant,
+    category: 'tresorerie',
+    journal: 'banque',
+    reference: data.reference,
+  };
 }
 
 function round2(n: number): number {

@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import AuthService from '../services/authService';
 import SecurityService from '../services/securityService';
+import { checkLockout, recordFailedAttempt, resetAttempts } from '../utils/loginRateLimit';
 
 interface LoginProps {
   onLoginSuccess: (token: string) => void;
@@ -12,6 +13,28 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [lockedSeconds, setLockedSeconds] = useState(0);
+  const [isLocked, setIsLocked] = useState(false);
+
+  useEffect(() => {
+    const status = checkLockout();
+    setLockedSeconds(status.remainingSeconds);
+    setIsLocked(status.locked);
+  }, []);
+
+  // Reevalue le verrouillage chaque seconde pendant qu'il est actif (que le
+  // verrouillage vienne du chargement de la page ou d'une tentative echouee en
+  // cours de session), pour reactiver automatiquement le formulaire au bon moment.
+  useEffect(() => {
+    if (!isLocked) return;
+
+    const interval = window.setInterval(() => {
+      const s = checkLockout();
+      setLockedSeconds(s.remainingSeconds);
+      if (!s.locked) setIsLocked(false);
+    }, 1000);
+    return () => window.clearInterval(interval);
+  }, [isLocked]);
 
   const validateInputs = (): boolean => {
     if (email.trim().toLowerCase() !== AuthService.getAllowedEmail()) {
@@ -39,7 +62,24 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
     e.preventDefault();
     setError('');
 
-    if (!validateInputs()) return;
+    const lockout = checkLockout();
+    if (lockout.locked) {
+      setLockedSeconds(lockout.remainingSeconds);
+      setIsLocked(true);
+      setError(`Trop de tentatives echouees. Reessayez dans ${lockout.remainingSeconds}s.`);
+      return;
+    }
+
+    if (!validateInputs()) {
+      const attempt = recordFailedAttempt();
+      if (attempt.locked) {
+        setLockedSeconds(attempt.remainingSeconds);
+        setIsLocked(true);
+        SecurityService.logAudit('login_lockout', 'warning', { email, attempts: attempt.attempts });
+        setError(`Trop de tentatives echouees. Reessayez dans ${attempt.remainingSeconds}s.`);
+      }
+      return;
+    }
 
     setLoading(true);
     SecurityService.logAudit('login_attempt', 'success', { email });
@@ -48,12 +88,20 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
 
     if (response.error) {
       setError(response.error.message);
-      SecurityService.logAudit('login_failed', 'failure', { email, error: response.error.message });
+      await SecurityService.logAudit('login_failed', 'failure', { email, error: response.error.message });
+      const attempt = recordFailedAttempt();
+      if (attempt.locked) {
+        setLockedSeconds(attempt.remainingSeconds);
+        setIsLocked(true);
+        await SecurityService.logAudit('login_lockout', 'warning', { email, attempts: attempt.attempts });
+        setError(`Trop de tentatives echouees. Reessayez dans ${attempt.remainingSeconds}s.`);
+      }
       setLoading(false);
       return;
     }
 
     if (response.session?.access_token) {
+      resetAttempts();
       SecurityService.logAudit('login_success', 'success', { email });
       onLoginSuccess(response.session.access_token);
     }
@@ -69,6 +117,9 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
         <p style={styles.helper}>Identifiant autorise: edson@gmail.com</p>
 
         {error && <div style={styles.error}>{error}</div>}
+        {isLocked && !error && (
+          <div style={styles.error}>Trop de tentatives echouees. Reessayez dans {lockedSeconds}s.</div>
+        )}
 
         <form onSubmit={handleLogin} style={styles.form}>
           <div style={styles.formGroup}>
@@ -78,7 +129,7 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="edson@gmail.com"
-              disabled={loading}
+              disabled={loading || isLocked}
               style={styles.input}
               autoComplete="off"
               required
@@ -93,7 +144,7 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••"
-                disabled={loading}
+                disabled={loading || isLocked}
                 style={styles.input}
                 autoComplete="current-password"
                 required
@@ -110,14 +161,14 @@ export function LoginComponent({ onLoginSuccess }: LoginProps) {
 
           <button
             type="submit"
-            disabled={loading}
+            disabled={loading || isLocked}
             style={{
               ...styles.button,
-              opacity: loading ? 0.6 : 1,
-              cursor: loading ? 'not-allowed' : 'pointer',
+              opacity: loading || isLocked ? 0.6 : 1,
+              cursor: loading || isLocked ? 'not-allowed' : 'pointer',
             }}
           >
-            {loading ? 'Connexion en cours...' : 'Se connecter'}
+            {loading ? 'Connexion en cours...' : isLocked ? `Verrouille (${lockedSeconds}s)` : 'Se connecter'}
           </button>
         </form>
       </div>

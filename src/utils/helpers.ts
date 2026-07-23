@@ -96,18 +96,69 @@ export type ImportedInvoiceData = {
   date: string;
   dueDate: string;
   description: string;
+  vendorName: string | null;
 };
 
-async function readFileTextSafe(file: File): Promise<string> {
-  const readableTypes = ['text/', 'application/json', 'application/csv'];
-  const isReadable = readableTypes.some((t) => file.type.startsWith(t)) || /\.(txt|csv|json)$/i.test(file.name);
-  if (!isReadable) return '';
+const FRENCH_MONTHS: Record<string, number> = {
+  janvier: 1, 'février': 2, fevrier: 2, mars: 3, avril: 4, mai: 5, juin: 6,
+  juillet: 7, 'août': 8, aout: 8, septembre: 9, octobre: 10, novembre: 11, 'décembre': 12, decembre: 12,
+};
 
-  try {
-    return await file.text();
-  } catch {
-    return '';
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+// Extrait une date plausible depuis le contenu du document (formats numeriques
+// jj/mm/aaaa, aaaa-mm-jj, ou en toutes lettres "12 juillet 2026"). Retourne
+// null si aucune date credible n'est trouvee - l'appelant garde alors la date
+// du jour par defaut, mais une date reellement presente sur le document prime
+// toujours pour que la facture tombe dans le bon exercice comptable.
+export function extractDate(text: string): string | null {
+  const numericMatch = text.match(/\b(\d{1,2})[/\-.](\d{1,2})[/\-.](\d{4})\b/);
+  if (numericMatch) {
+    const day = Number(numericMatch[1]);
+    const month = Number(numericMatch[2]);
+    const year = Number(numericMatch[3]);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${pad2(month)}-${pad2(day)}`;
+    }
   }
+
+  const isoMatch = text.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
+  if (isoMatch) {
+    const year = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]);
+    const day = Number(isoMatch[3]);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${pad2(month)}-${pad2(day)}`;
+    }
+  }
+
+  const monthNames = Object.keys(FRENCH_MONTHS).join('|');
+  const textMatch = new RegExp(`\\b(\\d{1,2})\\s+(${monthNames})\\s+(\\d{4})\\b`, 'i').exec(text);
+  if (textMatch) {
+    const day = Number(textMatch[1]);
+    const month = FRENCH_MONTHS[textMatch[2].toLowerCase()];
+    const year = Number(textMatch[3]);
+    return `${year}-${pad2(month)}-${pad2(day)}`;
+  }
+
+  return null;
+}
+
+// Extrait un nom de fournisseur/client plausible depuis le contenu (heuristique
+// simple : libelle explicite "Fournisseur:", "Client:", etc., ou une ligne
+// ressemblant a une raison sociale). Best-effort - sert a pre-remplir, pas a
+// rattacher automatiquement une fiche client (les fiches sont des enregistrements
+// distincts, un rapprochement exact par nom n'est pas garanti).
+export function extractVendorName(text: string): string | null {
+  const labelMatch = text.match(/(?:fournisseur|facturé à|facture a|client|émetteur|emetteur)\s*[:\-]\s*([A-ZÀ-Ý][\wÀ-ÿ&.,'\- ]{2,60})/i);
+  if (labelMatch) {
+    return labelMatch[1].trim().replace(/\s+/g, ' ');
+  }
+  const companyMatch = text.match(/\b([A-ZÀ-Ý][\wÀ-ÿ&.\- ]{2,50}\s+(?:SARL|SA|SAS|Ets|Etablissements))\b/i);
+  if (companyMatch) {
+    return companyMatch[1].trim();
+  }
+  return null;
 }
 
 // Extrait les montants plausibles d'un texte. Ecarte les nombres qui ressemblent
@@ -127,9 +178,13 @@ export function extractAmounts(text: string): number[] {
     .map(({ value }) => value);
 }
 
+// Transcription complete d'un document importe : lit reellement le contenu
+// (OCR pour une image, calque texte ou OCR pour un PDF scanne, lecture directe
+// pour un fichier texte) puis en extrait numero, montant, date et fournisseur.
 export async function parseInvoiceFromFile(file: File): Promise<ImportedInvoiceData> {
   const nameWithoutExt = file.name.replace(/\.[^.]+$/, '');
-  const content = await readFileTextSafe(file);
+  const { extractDocumentContent } = await import('./documentOcr');
+  const content = await extractDocumentContent(file);
 
   const invoiceNumberMatch = `${nameWithoutExt} ${content}`.match(/\b([A-Z]{2,6}-\d{2,4}-\d{2,6})\b/i);
   const invoiceNumber = invoiceNumberMatch ? invoiceNumberMatch[1].toUpperCase() : nameWithoutExt.replace(/\s+/g, '-').slice(0, 24).toUpperCase();
@@ -146,15 +201,20 @@ export async function parseInvoiceFromFile(file: File): Promise<ImportedInvoiceD
   const amount = amounts.length > 0 ? Math.max(...amounts) : null;
 
   const today = new Date();
-  const due = new Date(today);
+  // La date du document prime sur la date du jour quand elle est detectee -
+  // essentiel pour que la facture tombe dans le bon exercice comptable.
+  const detectedDate = extractDate(contentClean);
+  const invoiceDate = detectedDate ? new Date(`${detectedDate}T00:00:00`) : today;
+  const due = new Date(invoiceDate);
   due.setDate(due.getDate() + 30);
 
   return {
     invoiceNumber,
     amount,
-    date: today.toISOString().split('T')[0],
+    date: invoiceDate.toISOString().split('T')[0],
     dueDate: due.toISOString().split('T')[0],
     description: content ? content.slice(0, 200).replace(/\s+/g, ' ').trim() : `Importe depuis ${file.name}`,
+    vendorName: extractVendorName(contentClean),
   };
 }
 

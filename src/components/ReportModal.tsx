@@ -17,17 +17,18 @@ interface ReportModalProps {
   onClose: () => void;
   onSubmit: (data: ReportData) => void;
   clients?: Array<{ id: string; name: string }>;
+  initialData?: ReportData;
 }
 
-export function ReportModal({ isOpen, onClose, onSubmit, clients = [] }: ReportModalProps) {
-  const [title, setTitle] = useState('');
-  const [type, setType] = useState<'accounting' | 'client' | 'sales' | 'expenses' | 'custom'>('accounting');
-  const [period, setPeriod] = useState('monthly');
-  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
-  const [description, setDescription] = useState('');
-  const [includeGraphs, setIncludeGraphs] = useState(true);
-  const [clientId, setClientId] = useState('');
+export function ReportModal({ isOpen, onClose, onSubmit, clients = [], initialData }: ReportModalProps) {
+  const [title, setTitle] = useState(initialData?.title || '');
+  const [type, setType] = useState<'accounting' | 'client' | 'sales' | 'expenses' | 'custom'>(initialData?.type || 'accounting');
+  const [period, setPeriod] = useState(initialData?.period || 'monthly');
+  const [startDate, setStartDate] = useState(initialData?.startDate || new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState(initialData?.endDate || new Date().toISOString().split('T')[0]);
+  const [description, setDescription] = useState(initialData?.description || '');
+  const [includeGraphs, setIncludeGraphs] = useState(initialData?.includeGraphs ?? true);
+  const [clientId, setClientId] = useState(initialData?.clientId || '');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -72,7 +73,7 @@ export function ReportModal({ isOpen, onClose, onSubmit, clients = [] }: ReportM
         <div className="modal-header">
           <div>
             <p className="eyebrow">Rapports et analyses</p>
-            <h3>Générer un nouveau rapport</h3>
+            <h3>{initialData ? 'Modifier le rapport' : 'Générer un nouveau rapport'}</h3>
           </div>
           <button type="button" className="modal-close" onClick={onClose}>×</button>
         </div>
@@ -199,7 +200,7 @@ export function ReportModal({ isOpen, onClose, onSubmit, clients = [] }: ReportM
                 Annuler
               </button>
               <PrimaryButton type="submit" disabled={isSubmitting}>
-                {isSubmitting ? 'Génération...' : 'Générer le rapport'}
+                {isSubmitting ? 'Enregistrement...' : initialData ? 'Enregistrer les modifications' : 'Générer le rapport'}
               </PrimaryButton>
             </div>
           </div>

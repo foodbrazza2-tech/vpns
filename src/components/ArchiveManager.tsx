@@ -11,18 +11,12 @@ import {
 
 interface ArchiveManagerProps {
   clients: Array<{ id: string; name: string }>;
-  onNotify?: (message: string, type?: 'success' | 'info' | 'error') => void;
+  onNotify: (message: string, type?: 'success' | 'info' | 'error') => void;
 }
 
-export function ArchiveManager({ clients, onNotify }: ArchiveManagerProps) {
-  const notify = (message: string, type: 'success' | 'info' | 'error' = 'success') => {
-    if (onNotify) {
-      onNotify(message, type);
-    } else {
-      window.alert(message);
-    }
-  };
-
+// Toutes les erreurs remontent via onNotify (toast), le meme canal que le reste de
+// l'app - un seul mecanisme d'affichage d'erreur au lieu de deux (toast + banniere).
+export function ArchiveManager({ clients, onNotify: notify }: ArchiveManagerProps) {
   const [archives, setArchives] = useState<ClientArchive[]>([]);
   const [documents, setDocuments] = useState<ArchivedDocument[]>([]);
   const [selectedClient, setSelectedClient] = useState<string>('');
@@ -31,7 +25,6 @@ export function ArchiveManager({ clients, onNotify }: ArchiveManagerProps) {
   const [uploadProgress, setUploadProgress] = useState<number>(0);
   const [isUploading, setIsUploading] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string>('');
   const [newClientName, setNewClientName] = useState('');
 
   const categories = ['Facture', 'Devis', 'Reçu', 'Contrat', 'Rapport', 'Justificatif', 'Autre'];
@@ -40,11 +33,10 @@ export function ArchiveManager({ clients, onNotify }: ArchiveManagerProps) {
     const loadArchives = async () => {
       try {
         setIsLoading(true);
-        setError('');
         const loadedArchives = await ArchiveApiClient.getArchives();
         setArchives(loadedArchives);
       } catch (err) {
-        setError((err as Error).message || 'Impossible de charger les archives');
+        notify((err as Error).message || 'Impossible de charger les archives', 'error');
       } finally {
         setIsLoading(false);
       }
@@ -74,7 +66,7 @@ export function ArchiveManager({ clients, onNotify }: ArchiveManagerProps) {
         const refreshed = await ArchiveApiClient.getArchives();
         setArchives(refreshed);
       } catch (err) {
-        setError((err as Error).message || 'Impossible de synchroniser les archives clients');
+        notify((err as Error).message || 'Impossible de synchroniser les archives clients', 'error');
       } finally {
         setIsLoading(false);
       }
@@ -92,11 +84,10 @@ export function ArchiveManager({ clients, onNotify }: ArchiveManagerProps) {
 
       try {
         setIsLoading(true);
-        setError('');
         const loadedDocs = await ArchiveApiClient.getClientDocuments(selectedClient);
         setDocuments(loadedDocs);
       } catch (err) {
-        setError((err as Error).message || 'Impossible de charger les documents');
+        notify((err as Error).message || 'Impossible de charger les documents', 'error');
       } finally {
         setIsLoading(false);
       }
@@ -117,20 +108,19 @@ export function ArchiveManager({ clients, onNotify }: ArchiveManagerProps) {
   const handleCreateArchive = async () => {
     const normalizedName = newClientName.trim();
     if (!normalizedName) {
-      setError('Le nom client est requis');
+      notify('Le nom client est requis', 'error');
       return;
     }
 
     try {
       setIsLoading(true);
-      setError('');
       const archive = await ArchiveApiClient.createArchive(createClientId(normalizedName), normalizedName);
       const refreshed = await ArchiveApiClient.getArchives();
       setArchives(refreshed);
       setSelectedClient(archive.clientId);
       setNewClientName('');
     } catch (err) {
-      setError((err as Error).message || 'Impossible de creer ce client');
+      notify((err as Error).message || 'Impossible de creer ce client', 'error');
     } finally {
       setIsLoading(false);
     }
@@ -144,7 +134,6 @@ export function ArchiveManager({ clients, onNotify }: ArchiveManagerProps) {
     }
 
     setIsUploading(true);
-    setError('');
     const totalFiles = files.length;
     let uploadedFiles = 0;
 
@@ -164,7 +153,7 @@ export function ArchiveManager({ clients, onNotify }: ArchiveManagerProps) {
       setArchives(updatedArchives);
       notify(`${totalFiles} document(s) archive(s) avec succes.`);
     } catch (err) {
-      setError((err as Error).message || 'Echec upload');
+      notify((err as Error).message || 'Echec upload', 'error');
     } finally {
       setIsUploading(false);
       setUploadProgress(0);
@@ -243,7 +232,6 @@ export function ArchiveManager({ clients, onNotify }: ArchiveManagerProps) {
 
         {isUploading && <div className="upload-box">Téléversement en cours… {uploadProgress}%</div>}
         {isLoading && <div className="upload-box">Chargement des donnees...</div>}
-        {error && <div className="archive-empty">{error}</div>}
       </div>
 
       <div className="archive-section-card">

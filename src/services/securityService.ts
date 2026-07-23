@@ -1,45 +1,62 @@
 /**
- * Service de sécurité - Audit et protection
+ * Service de sécurité - Audit persistant (Supabase) et utilitaires de validation
  */
+import { supabase } from './authService';
+
+export type AuditStatus = 'success' | 'failure' | 'warning';
 
 export interface SecurityAudit {
-  timestamp: string;
+  id: string;
+  created_at: string;
   action: string;
-  userId?: string;
-  ip?: string;
-  userAgent?: string;
-  status: 'success' | 'failure' | 'warning';
-  details?: Record<string, any>;
+  status: AuditStatus;
+  details: Record<string, unknown> | null;
+  user_agent: string | null;
 }
-
-/**
- * Logs de sécurité en mémoire (à persister en DB en production)
- */
-const securityLogs: SecurityAudit[] = [];
 
 export class SecurityService {
   /**
-   * Enregistre une action de sécurité
+   * Enregistre une action de sécurité dans la table Supabase `audit_logs`.
+   * Best-effort : une erreur d'écriture d'audit ne doit jamais bloquer le flux appelant
+   * (ex: on ne veut pas empêcher une connexion parce que le log a échoué).
    */
-  static logAudit(
+  static async logAudit(
     action: string,
-    status: 'success' | 'failure' | 'warning' = 'success',
-    details?: Record<string, any>
-  ): void {
-    const audit: SecurityAudit = {
-      timestamp: new Date().toISOString(),
-      action,
-      status,
-      details,
-      userAgent: navigator.userAgent,
-    };
-
-    securityLogs.push(audit);
-
-    // Log seulement les erreurs et avertissements en console
-    if (status !== 'success') {
-      console.warn(`[Security] ${action}:`, audit);
+    status: AuditStatus = 'success',
+    details?: Record<string, unknown>
+  ): Promise<void> {
+    try {
+      await supabase.from('audit_logs').insert({
+        action,
+        status,
+        details: details ?? null,
+        user_agent: navigator.userAgent,
+      });
+    } catch (error) {
+      console.error("Erreur d'ecriture du journal d'audit:", error);
     }
+
+    if (status !== 'success') {
+      console.warn(`[Security] ${action}`, details);
+    }
+  }
+
+  /**
+   * Récupère les logs d'audit les plus récents (limités au propriétaire connecté via RLS).
+   */
+  static async getAuditLogs(limit: number = 100): Promise<SecurityAudit[]> {
+    const { data, error } = await supabase
+      .from('audit_logs')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) {
+      console.error("Erreur de recuperation du journal d'audit:", error);
+      return [];
+    }
+
+    return (data as SecurityAudit[]) ?? [];
   }
 
   /**
@@ -110,45 +127,6 @@ export class SecurityService {
     } catch {
       return false;
     }
-  }
-
-  /**
-   * Détecte les activités suspectes
-   */
-  static detectSuspiciousActivity(): boolean {
-    // Vérifier le taux de requêtes
-    const recentLogs = securityLogs.filter(
-      (log) => new Date(log.timestamp).getTime() > Date.now() - 60000 // Dernière minute
-    );
-
-    // Plus de 10 tentatives échouées par minute
-    const failures = recentLogs.filter((log) => log.status === 'failure').length;
-    if (failures > 10) {
-      this.logAudit('suspicious_activity_detected', 'warning', { failures });
-      return true;
-    }
-
-    return false;
-  }
-
-  /**
-   * Récupère les logs d'audit (admin seulement)
-   */
-  static getAuditLogs(limit: number = 100): SecurityAudit[] {
-    return securityLogs.slice(-limit);
-  }
-
-  /**
-   * Nettoie les logs anciens
-   */
-  static clearOldLogs(hoursAgo: number = 24): number {
-    const cutoff = Date.now() - hoursAgo * 60 * 60 * 1000;
-    const count = securityLogs.length;
-    securityLogs.splice(
-      0,
-      securityLogs.findIndex((log) => new Date(log.timestamp).getTime() > cutoff)
-    );
-    return count - securityLogs.length;
   }
 }
 

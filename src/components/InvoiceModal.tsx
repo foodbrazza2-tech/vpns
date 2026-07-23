@@ -10,7 +10,7 @@ export interface InvoiceData {
   vatAmount: number;
   amount: number; // TTC
   description: string;
-  status: 'draft' | 'sent' | 'paid' | 'overdue';
+  status: 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled';
   type: 'vente' | 'achat';
   counterpartAccount?: string;
 }
@@ -54,7 +54,7 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
   );
   const [vatRate, setVatRate] = useState<string>(initialData?.vatRate != null ? String(initialData.vatRate) : '18');
   const [description, setDescription] = useState(initialData?.description || '');
-  const [status, setStatus] = useState<'draft' | 'sent' | 'paid' | 'overdue'>(initialData?.status || 'draft');
+  const [status, setStatus] = useState<'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled'>(initialData?.status || 'draft');
   const [type, setType] = useState<'vente' | 'achat'>(initialData?.type || 'vente');
   const [counterpartAccount, setCounterpartAccount] = useState(initialData?.counterpartAccount || '');
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -125,7 +125,7 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
               </div>
             )}
 
-            <p className="import-hint">Le numéro de facture sera généré automatiquement (FAC-{new Date().getFullYear()}-NNN). L'écriture comptable sera <strong>enregistrée automatiquement</strong> dans le journal {type === 'vente' ? 'des Ventes' : 'des Achats'}.</p>
+            <p className="import-hint">Le numéro de facture sera généré automatiquement (NN/DG/VPNS/{new Date().getFullYear()}). L'écriture comptable sera <strong>enregistrée automatiquement</strong> dans le journal {type === 'vente' ? 'des Ventes' : 'des Achats'}.</p>
 
             {/* Type vente / achat */}
             <label>
@@ -235,13 +235,14 @@ export function InvoiceModal({ isOpen, onClose, onSubmit, clients = [], initialD
               Statut
               <select
                 value={status}
-                onChange={(e) => setStatus(e.target.value as 'draft' | 'sent' | 'paid' | 'overdue')}
+                onChange={(e) => setStatus(e.target.value as 'draft' | 'sent' | 'paid' | 'overdue' | 'cancelled')}
                 disabled={isSubmitting}
               >
                 <option value="draft">Brouillon</option>
                 <option value="sent">Envoyée</option>
                 <option value="paid">Payée</option>
                 <option value="overdue">Impayée</option>
+                {status === 'cancelled' && <option value="cancelled">Annulee</option>}
               </select>
             </label>
 

@@ -1,7 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
-import { parseInvoiceFromFile, extractAmounts } from './helpers';
+import { parseInvoiceFromFile, extractAmounts, extractDate, extractVendorName } from './helpers';
+
+// L'OCR reel (tesseract.js) telecharge ses donnees de langue depuis un CDN -
+// on le simule ici pour garder les tests rapides et deterministes ; le
+// comportement reel est verifie manuellement dans l'app.
+vi.mock('tesseract.js', () => ({
+  createWorker: vi.fn(async () => ({
+    recognize: vi.fn(async () => {
+      throw new Error('image illisible (simulee)');
+    }),
+    terminate: vi.fn(async () => {}),
+  })),
+}));
 import { exportTableToCsv } from './csvExport';
-import { calculerBalance, totauxBalance, calculerCompteResultat, calculerBilan, calculerGrandLivre } from './comptaReports';
+import { calculerBalance, totauxBalance, calculerCompteResultat, calculerBilan, calculerGrandLivre, calculerJournalCaisse, genererConseilsFinanciers } from './comptaReports';
 import { exportInvoiceToPdf, exportTableToPdf } from './pdfExport';
 import { libelleCompte, afficherCompte, classeDuCompte, COMPTES_A_PLAT } from '../data/planComptable';
 import type { EntryRecord } from '../services/businessDataService';
@@ -44,6 +56,26 @@ describe('Import de facture (transcription document)', () => {
     const parsed = await parseInvoiceFromFile(file);
     expect(parsed.invoiceNumber).toBeTruthy();
     expect(parsed.date).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it('extrait une date numerique jj/mm/aaaa depuis le texte', () => {
+    expect(extractDate('Facture emise le 05/07/2026 a Brazzaville')).toBe('2026-07-05');
+  });
+
+  it('extrait une date en toutes lettres', () => {
+    expect(extractDate('Brazzaville, le 12 juillet 2026')).toBe('2026-07-12');
+  });
+
+  it('retourne null si aucune date credible', () => {
+    expect(extractDate('Aucune date ici, juste du texte')).toBeNull();
+  });
+
+  it('extrait un nom de fournisseur via un libelle explicite', () => {
+    expect(extractVendorName('Fournisseur: EEC Congo SARL\nMontant: 50 000')).toBe('EEC Congo SARL');
+  });
+
+  it('extrait une raison sociale sans libelle explicite', () => {
+    expect(extractVendorName('Mballa Distribution SARL vous remercie de votre confiance')).toContain('SARL');
   });
 });
 
@@ -169,5 +201,68 @@ describe('Grand Livre', () => {
     // 5211 : +100000 (debit) puis -30000 (credit) = 70000
     expect(banque.solde).toBe(70000);
     expect(banque.mouvements[banque.mouvements.length - 1].soldeProgressif).toBe(70000);
+  });
+});
+
+describe('Journal de Caisse (compte 57)', () => {
+  it('regroupe les mouvements de caisse par jour avec solde progressif', () => {
+    const entries = [
+      E('2026-06-01', '5711', '706', 50000), // vente encaissee en especes
+      E('2026-06-01', '6011', '5711', 20000), // achat paye en especes
+      E('2026-06-02', '5711', '706', 30000), // vente encaissee en especes
+    ];
+    const journal = calculerJournalCaisse(entries);
+    expect(journal.jours).toHaveLength(2);
+
+    const jour1 = journal.jours[0];
+    expect(jour1.date).toBe('2026-06-01');
+    expect(jour1.soldeOuverture).toBe(0);
+    expect(jour1.totalEntrees).toBe(50000);
+    expect(jour1.totalSorties).toBe(20000);
+    expect(jour1.soldeCloture).toBe(30000);
+
+    const jour2 = journal.jours[1];
+    expect(jour2.soldeOuverture).toBe(30000);
+    expect(jour2.totalEntrees).toBe(30000);
+    expect(jour2.soldeCloture).toBe(60000);
+
+    expect(journal.totalEntrees).toBe(80000);
+    expect(journal.totalSorties).toBe(20000);
+    expect(journal.soldeFinal).toBe(60000);
+  });
+
+  it('ignore les ecritures qui ne touchent pas un compte de caisse', () => {
+    const entries = [E('2026-06-01', '5211', '706', 50000)]; // banque, pas caisse
+    const journal = calculerJournalCaisse(entries);
+    expect(journal.jours).toHaveLength(0);
+    expect(journal.soldeFinal).toBe(0);
+  });
+});
+
+describe('Conseils financiers', () => {
+  it('alerte quand les sorties depassent les entrees', () => {
+    const entries = [
+      E('2026-06-01', '5711', '706', 10000),
+      E('2026-06-02', '6011', '5711', 25000),
+    ];
+    const journal = calculerJournalCaisse(entries);
+    const resultat = calculerCompteResultat(entries);
+    const conseils = genererConseilsFinanciers(journal, resultat);
+    expect(conseils.some((c) => /depassent vos encaissements/i.test(c))).toBe(true);
+  });
+
+  it('signale un solde de caisse negatif comme anomalie de saisie', () => {
+    const journal = { jours: [], totalEntrees: 0, totalSorties: 10000, soldeFinal: -10000 };
+    const resultat = calculerCompteResultat([]);
+    const conseils = genererConseilsFinanciers(journal, resultat);
+    expect(conseils.some((c) => /negatif/i.test(c))).toBe(true);
+  });
+
+  it('ne remonte aucune anomalie sur une gestion saine', () => {
+    const entries = [E('2026-06-01', '5711', '706', 100000), E('2026-06-01', '6011', '5711', 20000)];
+    const journal = calculerJournalCaisse(entries);
+    const resultat = calculerCompteResultat(entries);
+    const conseils = genererConseilsFinanciers(journal, resultat);
+    expect(conseils.some((c) => /saine/i.test(c))).toBe(true);
   });
 });

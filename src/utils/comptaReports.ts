@@ -187,3 +187,110 @@ export function calculerBilan(entries: EntryRecord[]): Bilan {
 
   return { actif, passif: passifAvecResultat, totalActif, totalPassif, resultat };
 }
+
+// ═══════════════════════════════════════════
+// JOURNAL DE CAISSE (compte 57 - especes)
+// Registre chronologique des especes uniquement (distinct du compte banque,
+// classe 52) : chaque entree/sortie, avec solde progressif jour par jour -
+// c'est le suivi que tient au quotidien un gerant/caissier.
+// ═══════════════════════════════════════════
+export interface MouvementCaisse {
+  date: string;
+  description: string;
+  reference?: string;
+  entree: number;
+  sortie: number;
+}
+
+export interface JourCaisse {
+  date: string;
+  soldeOuverture: number;
+  totalEntrees: number;
+  totalSorties: number;
+  soldeCloture: number;
+  mouvements: MouvementCaisse[];
+}
+
+export interface JournalCaisse {
+  jours: JourCaisse[];
+  totalEntrees: number;
+  totalSorties: number;
+  soldeFinal: number;
+}
+
+const estCompteCaisse = (compte: string) => compte.startsWith('57');
+
+export function calculerJournalCaisse(entries: EntryRecord[]): JournalCaisse {
+  const mouvementsCaisse = entries.filter((e) => estCompteCaisse(e.debitAccount) || estCompteCaisse(e.creditAccount));
+
+  const parJour = new Map<string, MouvementCaisse[]>();
+  for (const e of mouvementsCaisse) {
+    const estEntree = estCompteCaisse(e.debitAccount);
+    const list = parJour.get(e.date) || [];
+    list.push({
+      date: e.date,
+      description: e.description,
+      reference: e.reference,
+      entree: estEntree ? e.amount : 0,
+      sortie: estEntree ? 0 : e.amount,
+    });
+    parJour.set(e.date, list);
+  }
+
+  const joursTries = Array.from(parJour.keys()).sort();
+  let solde = 0;
+  const jours: JourCaisse[] = joursTries.map((date) => {
+    const mvts = [...parJour.get(date)!].sort((a, b) => a.description.localeCompare(b.description));
+    const soldeOuverture = solde;
+    const totalEntrees = mvts.reduce((s, m) => s + m.entree, 0);
+    const totalSorties = mvts.reduce((s, m) => s + m.sortie, 0);
+    solde += totalEntrees - totalSorties;
+    return { date, soldeOuverture, totalEntrees, totalSorties, soldeCloture: solde, mouvements: mvts };
+  });
+
+  const totalEntrees = jours.reduce((s, j) => s + j.totalEntrees, 0);
+  const totalSorties = jours.reduce((s, j) => s + j.totalSorties, 0);
+
+  return { jours, totalEntrees, totalSorties, soldeFinal: solde };
+}
+
+// ═══════════════════════════════════════════
+// CONSEILS FINANCIERS
+// Analyse simple (regles de gestion courantes) du journal de caisse et du
+// compte de resultat, pour donner un avis exploitable sans jargon comptable.
+// ═══════════════════════════════════════════
+export function genererConseilsFinanciers(journal: JournalCaisse, resultat: CompteResultat): string[] {
+  const conseils: string[] = [];
+
+  if (journal.soldeFinal < 0) {
+    conseils.push('Le solde de caisse calcule est negatif : verifiez qu\'un solde d\'ouverture initial a bien ete saisi, ou qu\'aucune sortie n\'a ete enregistree deux fois.');
+  }
+
+  if (journal.totalEntrees > 0) {
+    const tauxDepense = Math.round((journal.totalSorties / journal.totalEntrees) * 100);
+    if (tauxDepense > 100) {
+      conseils.push(`Vos sorties de caisse (${tauxDepense}% des entrees) depassent vos encaissements sur cette periode : surveillez votre tresorerie de pres.`);
+    } else if (tauxDepense > 80) {
+      conseils.push(`Vos depenses representent ${tauxDepense}% de vos encaissements : la marge de securite en caisse reste faible.`);
+    } else {
+      conseils.push(`Vos depenses representent ${tauxDepense}% de vos encaissements : votre gestion de caisse est saine sur cette periode.`);
+    }
+  } else if (journal.totalSorties > 0) {
+    conseils.push('Des sorties de caisse sont enregistrees sans aucune entree sur cette periode : la caisse se vide sans etre reapprovisionnee.');
+  }
+
+  if (resultat.totalProduits > 0) {
+    const marge = Math.round((resultat.resultat / resultat.totalProduits) * 100);
+    if (resultat.resultat < 0) {
+      conseils.push(`Le resultat de l'exercice est deficitaire (marge ${marge}%) : les charges depassent les produits sur la periode selectionnee.`);
+    } else if (marge < 10) {
+      conseils.push(`La marge beneficiaire est faible (${marge}% des produits) : peu de coussin financier en cas d'imprevu.`);
+    }
+  }
+
+  if (conseils.length === 0) {
+    conseils.push('Aucune anomalie detectee sur la periode selectionnee.');
+  }
+
+  return conseils;
+}

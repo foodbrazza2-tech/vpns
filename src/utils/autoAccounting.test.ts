@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { entriesForInvoice, entryForPayment, detectInvoiceType, compteTresorerie } from './autoAccounting';
+import { entriesForInvoice, entryForPayment, detectInvoiceType, detectDocumentKind, detectTransferDirection, entryForBankTransfer, compteTresorerie } from './autoAccounting';
 
 const vente = {
   type: 'vente' as const,
@@ -75,5 +75,37 @@ describe('Detection vente/achat a l\'import', () => {
   });
   it('defaut = vente', () => {
     expect(detectInvoiceType('Facture de prestation pour le client')).toBe('vente');
+  });
+});
+
+describe('Detection du type de document a l\'import (facture vs virement)', () => {
+  it('detecte un bordereau de virement bancaire', () => {
+    expect(detectDocumentKind('Bordereau de virement bancaire - BGFI Bank')).toBe('virement_bancaire');
+  });
+  it('detecte un releve bancaire', () => {
+    expect(detectDocumentKind('Relevé bancaire du compte IBAN CG...')).toBe('virement_bancaire');
+  });
+  it('retombe sur vente/achat pour une facture normale', () => {
+    expect(detectDocumentKind('Facture de prestation pour le client')).toBe('vente');
+    expect(detectDocumentKind('Facture d\'achat fournisseur, a payer')).toBe('achat');
+  });
+  it('detecte le sens du virement', () => {
+    expect(detectTransferDirection('Virement recu de MTN Congo')).toBe('entrant');
+    expect(detectTransferDirection('Virement emis au beneficiaire XYZ')).toBe('sortant');
+  });
+});
+
+describe('Comptabilisation auto - VIREMENT BANCAIRE (compte d\'attente 471)', () => {
+  it('virement entrant : tresorerie debit / 471 credit (a reclasser)', () => {
+    const e = entryForBankTransfer({ date: '2026-05-01', amount: 75000, method: 'virement', direction: 'entrant', description: 'Virement bancaire - Client X' });
+    expect(e.journal).toBe('banque');
+    expect(e.debitAccount).toBe('5211');
+    expect(e.creditAccount).toBe('471');
+    expect(e.amount).toBe(75000);
+  });
+  it('virement sortant : 471 debit / tresorerie credit (a reclasser)', () => {
+    const e = entryForBankTransfer({ date: '2026-05-02', amount: 30000, method: 'virement', direction: 'sortant', description: 'Virement bancaire emis' });
+    expect(e.debitAccount).toBe('471');
+    expect(e.creditAccount).toBe('5211');
   });
 });

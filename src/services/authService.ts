@@ -38,7 +38,6 @@ export interface AuthUser {
   email: string;
   name?: string;
   avatar_url?: string;
-  role?: 'admin' | 'user' | 'viewer';
 }
 
 export interface AuthResponse {

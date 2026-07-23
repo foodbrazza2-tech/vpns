@@ -17,17 +17,18 @@ interface EventModalProps {
   onClose: () => void;
   onSubmit: (data: EventData) => void;
   clients?: Array<{ id: string; name: string }>;
+  initialData?: EventData;
 }
 
-export function EventModal({ isOpen, onClose, onSubmit, clients = [] }: EventModalProps) {
-  const [title, setTitle] = useState('');
-  const [description, setDescription] = useState('');
-  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
-  const [time, setTime] = useState('09:00');
-  const [duration, setDuration] = useState(60);
-  const [clientId, setClientId] = useState('');
-  const [location, setLocation] = useState('');
-  const [type, setType] = useState<'meeting' | 'call' | 'reminder' | 'followup'>('meeting');
+export function EventModal({ isOpen, onClose, onSubmit, clients = [], initialData }: EventModalProps) {
+  const [title, setTitle] = useState(initialData?.title || '');
+  const [description, setDescription] = useState(initialData?.description || '');
+  const [date, setDate] = useState(initialData?.date || new Date().toISOString().split('T')[0]);
+  const [time, setTime] = useState(initialData?.time || '09:00');
+  const [duration, setDuration] = useState(initialData?.duration ?? 60);
+  const [clientId, setClientId] = useState(initialData?.clientId || '');
+  const [location, setLocation] = useState(initialData?.location || '');
+  const [type, setType] = useState<'meeting' | 'call' | 'reminder' | 'followup'>(initialData?.type || 'meeting');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -73,7 +74,7 @@ export function EventModal({ isOpen, onClose, onSubmit, clients = [] }: EventMod
         <div className="modal-header">
           <div>
             <p className="eyebrow">Agenda et rappels</p>
-            <h3>Créer un nouvel événement</h3>
+            <h3>{initialData ? "Modifier l'événement" : 'Créer un nouvel événement'}</h3>
           </div>
           <button type="button" className="modal-close" onClick={onClose}>×</button>
         </div>
@@ -196,7 +197,7 @@ export function EventModal({ isOpen, onClose, onSubmit, clients = [] }: EventMod
                 Annuler
               </button>
               <PrimaryButton type="submit" disabled={isSubmitting}>
-                {isSubmitting ? 'Création...' : 'Créer l\'événement'}
+                {isSubmitting ? 'Enregistrement...' : initialData ? 'Enregistrer les modifications' : 'Créer l\'événement'}
               </PrimaryButton>
             </div>
           </div>

@@ -17,13 +17,27 @@ import AuthService from './services/authService';
 import { parseAppointmentText, parseQuickEntry, parseInvoiceFromFile } from './utils/helpers';
 import { exportTableToCsv } from './utils/csvExport';
 import { afficherCompte, classeDuCompte } from './data/planComptable';
-import { detectInvoiceType } from './utils/autoAccounting';
+import { detectDocumentKind, detectTransferDirection, entryForBankTransfer, entryForCaisseBanqueTransfer } from './utils/autoAccounting';
+import { makeId, formatFcfa, formatDate, yearOf } from './utils/format';
+import { paginate, DEFAULT_PAGE_SIZE } from './utils/pagination';
+import { Pagination } from './components/Pagination';
+import { ClientsSection } from './sections/ClientsSection';
+import { AgendaSection } from './sections/AgendaSection';
+import { RapportsSection } from './sections/RapportsSection';
+import { NotificationsSection } from './sections/NotificationsSection';
+import { ParametresSection } from './sections/ParametresSection';
+import { CaisseJournalPanel } from './sections/CaisseJournalPanel';
+import { CahierJournalReviewModal, type ConfirmedCaisseOperation } from './components/CahierJournalReviewModal';
+import { parseCahierJournalLines, type CandidateCaisseOperation } from './utils/cahierJournalParser';
+import { COMPTE } from './utils/autoAccounting';
 import {
   calculerBalance,
   totauxBalance,
   calculerGrandLivre,
   calculerCompteResultat,
   calculerBilan,
+  calculerJournalCaisse,
+  genererConseilsFinanciers,
 } from './utils/comptaReports';
 import {
   type EntryRecord,
@@ -35,6 +49,8 @@ import {
   type PaymentRecord,
   listClients,
   createClient,
+  updateClient,
+  deleteClient,
   listInvoices,
   createInvoice,
   listAccountingEntries,
@@ -46,10 +62,16 @@ import {
   updateInvoiceStatus,
   listEvents,
   createEvent,
+  updateEvent,
+  deleteEvent,
   listReports,
   createReport,
+  updateReport,
+  deleteReport,
   listNotifications,
   createNotification,
+  updateNotification,
+  deleteNotification,
 } from './services/businessDataService';
 
 type SectionKey = 'dashboard' | 'comptabilite' | 'factures' | 'clients' | 'agenda' | 'documents' | 'rapports' | 'notifications' | 'parametres';
@@ -81,6 +103,7 @@ const invoiceStatusLabels: Record<InvoiceData['status'], string> = {
   sent: 'Envoyee',
   paid: 'Payee',
   overdue: 'Impayee',
+  cancelled: 'Annulee',
 };
 
 const invoiceStatusColors: Record<InvoiceData['status'], string> = {
@@ -88,13 +111,7 @@ const invoiceStatusColors: Record<InvoiceData['status'], string> = {
   sent: 'blue',
   paid: 'green',
   overdue: 'red',
-};
-
-const notificationDotColors: Record<NotificationData['type'], string> = {
-  reminder: 'orange',
-  alert: 'red',
-  success: 'green',
-  info: 'blue',
+  cancelled: 'neutral',
 };
 
 const journalLabels: Record<string, string> = {
@@ -103,51 +120,6 @@ const journalLabels: Record<string, string> = {
   banque: 'Banque',
   od: 'Op. diverses',
 };
-
-const makeId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-
-const formatFcfa = (value: number) => `${value.toLocaleString('fr-FR')} FCFA`;
-const formatDate = (value: string) => {
-  if (!value) return '-';
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleDateString('fr-FR');
-};
-// Extrait l'annee depuis une chaine yyyy-mm-dd sans passer par Date() (evite les
-// decalages de fuseau horaire pres du 1er janvier).
-const yearOf = (value: string) => Number(value.slice(0, 4));
-
-function MiniCalendar({ highlightDates }: { highlightDates: string[] }) {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = today.getMonth();
-  const firstDay = new Date(year, month, 1);
-  const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const startOffset = (firstDay.getDay() + 6) % 7; // lundi = 0
-  const cells: Array<number | null> = [...Array(startOffset).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)];
-  const highlightSet = new Set(
-    highlightDates
-      .map((d) => d.split('-').map(Number))
-      .filter(([y, m]) => y === year && m - 1 === month)
-      .map(([, , day]) => day)
-  );
-
-  return (
-    <div className="mini-cal">
-      {['L', 'M', 'M', 'J', 'V', 'S', 'D'].map((d, i) => (
-        <div className="cal-day-head" key={`${d}-${i}`}>{d}</div>
-      ))}
-      {cells.map((day, i) => (
-        <div
-          key={i}
-          className={`cal-day ${day === null ? 'empty' : ''} ${day === today.getDate() ? 'today' : ''} ${day && highlightSet.has(day) && day !== today.getDate() ? 'has-event' : ''}`.trim()}
-        >
-          {day || ''}
-        </div>
-      ))}
-    </div>
-  );
-}
 
 function App() {
   const [authChecked, setAuthChecked] = useState(false);
@@ -168,8 +140,10 @@ function App() {
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
   const [isDataLoading, setIsDataLoading] = useState(false);
   const [selectedExercise, setSelectedExercise] = useState<number>(new Date().getFullYear());
-  const [comptaTab, setComptaTab] = useState<'journal' | 'grandlivre' | 'balance' | 'etats'>('journal');
+  const [comptaTab, setComptaTab] = useState<'journal' | 'grandlivre' | 'balance' | 'etats' | 'caisse'>('journal');
   const [journalFilter, setJournalFilter] = useState<'tous' | 'ventes' | 'achats' | 'banque' | 'od'>('tous');
+  const [journalPage, setJournalPage] = useState(1);
+  const [invoicesPage, setInvoicesPage] = useState(1);
   const [paymentForInvoice, setPaymentForInvoice] = useState<InvoiceRecord | null>(null);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentMethod, setPaymentMethod] = useState('especes');
@@ -178,6 +152,19 @@ function App() {
   const [invoiceInitialData, setInvoiceInitialData] = useState<Partial<InvoiceData> | undefined>(undefined);
   const [invoiceModalKey, setInvoiceModalKey] = useState(0);
   const [isImportingInvoice, setIsImportingInvoice] = useState(false);
+
+  // Import d'une photo de cahier journal : operations detectees en attente de
+  // validation par l'utilisateur avant enregistrement dans le journal de caisse.
+  const [isImportingCahier, setIsImportingCahier] = useState(false);
+  const [isSubmittingCahier, setIsSubmittingCahier] = useState(false);
+  const [cahierCandidates, setCahierCandidates] = useState<CandidateCaisseOperation[] | null>(null);
+
+  // Edition : quand une de ces valeurs est non-nulle, le modal correspondant s'ouvre
+  // pre-rempli et la soumission met a jour l'enregistrement au lieu d'en creer un.
+  const [editingClient, setEditingClient] = useState<ClientRecord | null>(null);
+  const [editingEvent, setEditingEvent] = useState<EventRecord | null>(null);
+  const [editingReport, setEditingReport] = useState<ReportRecord | null>(null);
+  const [editingNotification, setEditingNotification] = useState<NotificationRecord | null>(null);
 
   const parsedEntry = useMemo(() => parseQuickEntry(quickText), [quickText]);
   const parsedAppointment = useMemo(() => parseAppointmentText(appointmentText), [appointmentText]);
@@ -269,45 +256,159 @@ function App() {
       openInvoiceModal(undefined);
       return;
     }
+    setEditingClient(null);
+    setEditingEvent(null);
+    setEditingReport(null);
+    setEditingNotification(null);
     setIsModalOpen(true);
   };
 
-  // Import / numerisation : l'app analyse le document, cree la facture ET
-  // comptabilise automatiquement (journal ventes ou achats), sans intervention.
+  // Cherche un client existant dont le nom ou l'entreprise correspond au
+  // fournisseur/client detecte dans le document (rapprochement approximatif,
+  // best-effort - ne bloque jamais l'import si aucun match n'est trouve).
+  const matchClientByName = (vendorName: string | null): string => {
+    if (!vendorName) return '';
+    const needle = vendorName.trim().toLowerCase();
+    if (needle.length < 3) return '';
+    const match = clientsList.find(
+      (c) => c.name.toLowerCase().includes(needle) || c.company.toLowerCase().includes(needle) ||
+        needle.includes(c.name.toLowerCase()) || needle.includes(c.company.toLowerCase())
+    );
+    return match?.id || '';
+  };
+
+  // Import / numerisation : transcription complete du document (OCR image,
+  // lecture/OCR PDF, ou texte direct), puis comptabilisation automatique sans
+  // intervention - dans le journal des Ventes/Achats pour une facture/recu, ou
+  // directement en tresorerie (journal Banque) pour un bordereau de virement.
   const handleImportInvoiceFile = async (file: File) => {
     setIsImportingInvoice(true);
     try {
       const parsed = await parseInvoiceFromFile(file);
-      const detectedType = detectInvoiceType(`${file.name} ${parsed.description}`);
+      const fullText = `${file.name} ${parsed.description}`;
+      const documentKind = detectDocumentKind(fullText);
       const ht = parsed.amount || 0;
+
+      if (documentKind === 'virement_bancaire' || documentKind === 'versement' || documentKind === 'retrait') {
+        if (ht <= 0) {
+          pushToast('Piece de tresorerie importee mais montant illisible. Saisissez le mouvement manuellement.', 'info');
+          return;
+        }
+        if (documentKind === 'virement_bancaire') {
+          const direction = detectTransferDirection(fullText);
+          const generated = entryForBankTransfer({
+            date: parsed.date,
+            amount: ht,
+            method: 'virement',
+            direction,
+            description: parsed.vendorName ? `Virement bancaire - ${parsed.vendorName}` : `Virement bancaire (${parsed.invoiceNumber})`,
+            reference: parsed.invoiceNumber,
+          });
+          const record = await createAccountingEntry(generated);
+          setEntries((prev) => [record, ...prev]);
+          pushToast(`Bordereau de virement importe et comptabilise en compte d'attente (471) - a reclasser dans le journal Banque.`);
+          return;
+        }
+        const generated = entryForCaisseBanqueTransfer(documentKind, {
+          date: parsed.date,
+          amount: ht,
+          description: documentKind === 'versement' ? `Versement especes en banque (${parsed.invoiceNumber})` : `Retrait especes de la banque (${parsed.invoiceNumber})`,
+          reference: parsed.invoiceNumber,
+        });
+        const record = await createAccountingEntry(generated);
+        setEntries((prev) => [record, ...prev]);
+        pushToast(`Bordereau de ${documentKind === 'versement' ? 'versement' : 'retrait'} importe et comptabilise (Caisse <-> Banque).`);
+        return;
+      }
+
       if (ht <= 0) {
         // Montant illisible : on ouvre le formulaire pre-rempli pour saisie manuelle.
-        openInvoiceModal({ type: detectedType, date: parsed.date, dueDate: parsed.dueDate, description: parsed.description });
+        openInvoiceModal({
+          type: documentKind,
+          date: parsed.date,
+          dueDate: parsed.dueDate,
+          description: parsed.vendorName ? `${parsed.description} (${parsed.vendorName})` : parsed.description,
+          clientId: matchClientByName(parsed.vendorName) || undefined,
+        });
         pushToast(`Document importe mais montant illisible. Completez la facture.`, 'info');
         return;
       }
       const vatRate = 18;
       const vatAmount = Math.round(ht * (vatRate / 100) * 100) / 100;
+      const matchedClientId = matchClientByName(parsed.vendorName);
       const data: InvoiceData = {
-        clientId: '',
+        clientId: matchedClientId,
         date: parsed.date,
         dueDate: parsed.dueDate,
         amountHt: ht,
         vatRate,
         vatAmount,
         amount: Math.round((ht + vatAmount) * 100) / 100,
-        description: parsed.description,
-        status: detectedType === 'vente' ? 'sent' : 'draft',
-        type: detectedType,
+        description: matchedClientId || !parsed.vendorName ? parsed.description : `${parsed.description} (${parsed.vendorName})`,
+        status: documentKind === 'vente' ? 'sent' : 'draft',
+        type: documentKind,
       };
       const { invoice, entries: generated } = await createInvoice(data);
       setInvoices((prev) => [invoice, ...prev]);
       setEntries((prev) => [...generated, ...prev]);
-      pushToast(`Facture ${invoice.invoiceNumber} importee et comptabilisee automatiquement (journal ${detectedType === 'vente' ? 'Ventes' : 'Achats'}).`);
+      pushToast(`Facture ${invoice.invoiceNumber} importee et comptabilisee automatiquement (journal ${documentKind === 'vente' ? 'Ventes' : 'Achats'}).`);
     } catch (err) {
       pushToast((err as Error).message || "Impossible d'analyser ce fichier.", 'error');
     } finally {
       setIsImportingInvoice(false);
+    }
+  };
+
+  // Photo d'un cahier journal papier : OCR de la page entiere puis decoupage en
+  // plusieurs operations candidates. Ne poste jamais directement - l'utilisateur
+  // valide/corrige chaque ligne dans la modale de revue avant enregistrement.
+  const handleImportCahierJournal = async (file: File) => {
+    setIsImportingCahier(true);
+    try {
+      const { extractDocumentContent } = await import('./utils/documentOcr');
+      const text = await extractDocumentContent(file);
+      const candidates = parseCahierJournalLines(text, new Date().toISOString().split('T')[0]);
+      if (candidates.length === 0) {
+        pushToast("Aucune operation avec montant n'a ete detectee sur cette photo. Verifiez la qualite de l'image.", 'info');
+        return;
+      }
+      setCahierCandidates(candidates);
+    } catch (err) {
+      pushToast((err as Error).message || "Impossible d'analyser cette photo.", 'error');
+    } finally {
+      setIsImportingCahier(false);
+    }
+  };
+
+  // Enregistre les operations validees par l'utilisateur : chaque entree est
+  // comptabilisee comme une vente encaissee (debit Caisse / credit Vente), chaque
+  // sortie comme une depense (debit compte de charge suggere / credit Caisse).
+  const handleConfirmCahierJournal = async (operations: ConfirmedCaisseOperation[]) => {
+    setIsSubmittingCahier(true);
+    try {
+      const created: EntryRecord[] = [];
+      for (const op of operations) {
+        const isEntree = op.sens === 'entree';
+        const suggestion = isEntree ? null : parseQuickEntry(op.description);
+        const data: AccountingEntryData = {
+          date: op.date,
+          description: op.description,
+          debitAccount: isEntree ? COMPTE.CAISSE : (suggestion?.account || '6051'),
+          creditAccount: isEntree ? COMPTE.VENTE_DEFAUT : COMPTE.CAISSE,
+          amount: op.amount,
+          category: isEntree ? 'vente' : (suggestion?.category || 'Divers'),
+          journal: isEntree ? 'ventes' : 'achats',
+        };
+        const record = await createAccountingEntry(data);
+        created.push(record);
+      }
+      setEntries((prev) => [...created, ...prev]);
+      pushToast(`${created.length} operation(s) du cahier journal enregistree(s) dans le journal de caisse.`);
+      setCahierCandidates(null);
+    } catch (err) {
+      pushToast((err as Error).message || "Impossible d'enregistrer certaines operations.", 'error');
+    } finally {
+      setIsSubmittingCahier(false);
     }
   };
 
@@ -337,10 +438,28 @@ function App() {
 
   const handleAddClient = async (data: ClientData) => {
     try {
-      const record = await createClient(data);
-      setClientsList((prev) => [record, ...prev]);
+      if (editingClient) {
+        const record = await updateClient(editingClient.id, data);
+        setClientsList((prev) => prev.map((c) => (c.id === record.id ? record : c)));
+        pushToast(`Client ${data.name} modifie.`);
+      } else {
+        const record = await createClient(data);
+        setClientsList((prev) => [record, ...prev]);
+        pushToast(`Client ${data.name} ajoute.`);
+      }
       setIsModalOpen(false);
-      pushToast(`Client ${data.name} ajoute.`);
+      setEditingClient(null);
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
+  };
+
+  const handleDeleteClient = async (client: ClientRecord) => {
+    if (!window.confirm(`Supprimer le client "${client.name}" (${client.company}) ? Cette action est irreversible.`)) return;
+    try {
+      await deleteClient(client.id);
+      setClientsList((prev) => prev.filter((c) => c.id !== client.id));
+      pushToast(`Client ${client.name} supprime.`);
     } catch (err) {
       pushToast((err as Error).message, 'error');
     }
@@ -361,10 +480,28 @@ function App() {
 
   const handleAddEvent = async (data: EventData) => {
     try {
-      const record = await createEvent(data);
-      setEvents((prev) => [record, ...prev]);
+      if (editingEvent) {
+        const record = await updateEvent(editingEvent.id, data);
+        setEvents((prev) => prev.map((e) => (e.id === record.id ? record : e)));
+        pushToast(`Evenement "${data.title}" modifie.`);
+      } else {
+        const record = await createEvent(data);
+        setEvents((prev) => [record, ...prev]);
+        pushToast(`Evenement "${data.title}" planifie.`);
+      }
       setIsModalOpen(false);
-      pushToast(`Evenement "${data.title}" planifie.`);
+      setEditingEvent(null);
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
+  };
+
+  const handleDeleteEvent = async (event: EventRecord) => {
+    if (!window.confirm(`Supprimer l'evenement "${event.title}" ?`)) return;
+    try {
+      await deleteEvent(event.id);
+      setEvents((prev) => prev.filter((e) => e.id !== event.id));
+      pushToast(`Evenement "${event.title}" supprime.`);
     } catch (err) {
       pushToast((err as Error).message, 'error');
     }
@@ -372,10 +509,28 @@ function App() {
 
   const handleAddReport = async (data: ReportData) => {
     try {
-      const record = await createReport(data);
-      setReports((prev) => [record, ...prev]);
+      if (editingReport) {
+        const record = await updateReport(editingReport.id, data);
+        setReports((prev) => prev.map((r) => (r.id === record.id ? record : r)));
+        pushToast(`Rapport "${data.title}" modifie.`);
+      } else {
+        const record = await createReport(data);
+        setReports((prev) => [record, ...prev]);
+        pushToast(`Rapport "${data.title}" genere.`);
+      }
       setIsModalOpen(false);
-      pushToast(`Rapport "${data.title}" genere.`);
+      setEditingReport(null);
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
+  };
+
+  const handleDeleteReport = async (report: ReportRecord) => {
+    if (!window.confirm(`Supprimer le rapport "${report.title}" ?`)) return;
+    try {
+      await deleteReport(report.id);
+      setReports((prev) => prev.filter((r) => r.id !== report.id));
+      pushToast(`Rapport "${report.title}" supprime.`);
     } catch (err) {
       pushToast((err as Error).message, 'error');
     }
@@ -383,10 +538,71 @@ function App() {
 
   const handleAddNotification = async (data: NotificationData) => {
     try {
-      const record = await createNotification(data);
-      setNotifications((prev) => [record, ...prev]);
+      if (editingNotification) {
+        const record = await updateNotification(editingNotification.id, data);
+        setNotifications((prev) => prev.map((n) => (n.id === record.id ? record : n)));
+        pushToast(`Notification "${data.title}" modifiee.`);
+      } else {
+        const record = await createNotification(data);
+        setNotifications((prev) => [record, ...prev]);
+        pushToast(`Notification "${data.title}" programmee.`);
+      }
       setIsModalOpen(false);
-      pushToast(`Notification "${data.title}" programmee.`);
+      setEditingNotification(null);
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
+  };
+
+  const handleDeleteNotification = async (notif: NotificationRecord) => {
+    if (!window.confirm(`Supprimer la notification "${notif.title}" ?`)) return;
+    try {
+      await deleteNotification(notif.id);
+      setNotifications((prev) => prev.filter((n) => n.id !== notif.id));
+      pushToast(`Notification "${notif.title}" supprimee.`);
+    } catch (err) {
+      pushToast((err as Error).message, 'error');
+    }
+  };
+
+  const openEditClient = (client: ClientRecord) => {
+    setEditingClient(client);
+    setIsModalOpen(true);
+  };
+
+  const openEditEvent = (event: EventRecord) => {
+    setEditingEvent(event);
+    setIsModalOpen(true);
+  };
+
+  const openEditReport = (report: ReportRecord) => {
+    setEditingReport(report);
+    setIsModalOpen(true);
+  };
+
+  const openEditNotification = (notif: NotificationRecord) => {
+    setEditingNotification(notif);
+    setIsModalOpen(true);
+  };
+
+  // Annulation de facture (au lieu de suppression) : contre-passe chaque ecriture
+  // generee automatiquement pour cette facture, puis marque la facture "annulee".
+  // Bloquee si un paiement existe deja (il faudrait d'abord annuler le reglement).
+  const handleCancelInvoice = async (invoice: InvoiceRecord) => {
+    if (paidForInvoice(invoice.id) > 0) {
+      pushToast('Impossible d\'annuler : un paiement est deja enregistre sur cette facture.', 'error');
+      return;
+    }
+    if (!window.confirm(`Annuler la facture ${invoice.invoiceNumber} ? Les ecritures comptables associees seront contre-passees.`)) return;
+    try {
+      const linkedEntries = entries.filter((e) => e.sourceType === 'invoice' && e.sourceId === invoice.id && !e.reversed);
+      for (const entry of linkedEntries) {
+        const { reversal, original } = await reverseAccountingEntry(entry);
+        setEntries((prev) => [reversal, ...prev.map((e) => (e.id === original.id ? original : e))]);
+      }
+      await updateInvoiceStatus(invoice.id, 'cancelled');
+      setInvoices((prev) => prev.map((i) => (i.id === invoice.id ? { ...i, status: 'cancelled' } : i)));
+      pushToast(`Facture ${invoice.invoiceNumber} annulee et ecritures contre-passees.`);
     } catch (err) {
       pushToast((err as Error).message, 'error');
     }
@@ -481,6 +697,13 @@ function App() {
     [invoices, selectedExercise]
   );
 
+  // Pagination du journal comptable et des factures (les exports CSV/PDF portent
+  // toujours sur la liste complete, seul l'affichage a l'ecran est paginee).
+  const journalPagination = paginate(journalEntries, journalPage, DEFAULT_PAGE_SIZE);
+  const invoicesPagination = paginate(invoicesForExercise, invoicesPage, DEFAULT_PAGE_SIZE);
+  useEffect(() => setJournalPage(1), [journalFilter, selectedExercise]);
+  useEffect(() => setInvoicesPage(1), [selectedExercise]);
+
   const totalMovements = entriesForExercise.reduce((sum, e) => sum + e.amount, 0);
   const totalInvoiced = invoicesForExercise.reduce((sum, i) => sum + i.amount, 0);
   const totalVatCollected = invoicesForExercise.reduce((sum, i) => sum + i.vatAmount, 0);
@@ -510,6 +733,9 @@ function App() {
     () => entriesForExercise.filter((e) => classeDuCompte(e.debitAccount) === 5 || classeDuCompte(e.creditAccount) === 5),
     [entriesForExercise]
   );
+  // Journal de caisse (compte 57 uniquement) + analyse financiere automatique.
+  const journalCaisse = useMemo(() => calculerJournalCaisse(entriesForExercise), [entriesForExercise]);
+  const conseilsFinanciers = useMemo(() => genererConseilsFinanciers(journalCaisse, compteResultat), [journalCaisse, compteResultat]);
 
   const systemNotifications = useMemo(() => {
     const list: Array<{ id: string; title: string; message: string; date: string; tone: 'orange' | 'red' | 'blue' }> = [];
@@ -578,6 +804,7 @@ function App() {
               <button type="button" className={`tab-btn ${comptaTab === 'grandlivre' ? 'active' : ''}`} onClick={() => setComptaTab('grandlivre')}>Grand Livre</button>
               <button type="button" className={`tab-btn ${comptaTab === 'balance' ? 'active' : ''}`} onClick={() => setComptaTab('balance')}>Balance</button>
               <button type="button" className={`tab-btn ${comptaTab === 'etats' ? 'active' : ''}`} onClick={() => setComptaTab('etats')}>Bilan & Resultat</button>
+              <button type="button" className={`tab-btn ${comptaTab === 'caisse' ? 'active' : ''}`} onClick={() => setComptaTab('caisse')}>Journal de Caisse</button>
             </div>
 
             {comptaTab === 'journal' && (
@@ -639,7 +866,7 @@ function App() {
                         <tr><th>Date</th><th>Journal</th><th>Libelle</th><th>Compte debite</th><th>Compte credite</th><th>Montant</th><th>Actions</th></tr>
                       </thead>
                       <tbody>
-                        {journalEntries.map((entry) => (
+                        {journalPagination.items.map((entry) => (
                           <tr key={entry.id} className={entry.reversed ? 'row-reversed' : ''}>
                             <td>{formatDate(entry.date)}</td>
                             <td><span className="chip neutral">{journalLabels[entry.journal || 'od']}</span></td>
@@ -658,6 +885,7 @@ function App() {
                     </table>
                     </div>
                   )}
+                  <Pagination page={journalPagination.page} totalPages={journalPagination.totalPages} onPageChange={setJournalPage} />
                 </article>
 
                 <article className="panel-card">
@@ -841,6 +1069,18 @@ function App() {
                 </article>
               </>
             )}
+
+            {comptaTab === 'caisse' && (
+              <CaisseJournalPanel
+                selectedExercise={selectedExercise}
+                availableExercises={availableExercises}
+                onExerciseChange={setSelectedExercise}
+                journal={journalCaisse}
+                conseils={conseilsFinanciers}
+                isImportingCahier={isImportingCahier}
+                onImportCahier={handleImportCahierJournal}
+              />
+            )}
           </section>
         );
 
@@ -880,8 +1120,8 @@ function App() {
                 <h4>Factures - Exercice {selectedExercise}</h4>
                 <div className="panel-top-actions">
                   <span>{invoicesForExercise.length} facture(s)</span>
-                  <label className="file-import-label">
-                    {isImportingInvoice ? 'Analyse...' : 'Importer une facture'}
+                  <label className="file-import-label" title="Facture, recu ou bordereau de virement bancaire (image, PDF ou texte) - transcription et comptabilisation automatiques">
+                    {isImportingInvoice ? 'Analyse OCR en cours...' : 'Importer un document'}
                     <input
                       type="file"
                       className="file-import-input"
@@ -960,7 +1200,7 @@ function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    {invoicesForExercise.map((invoice) => {
+                    {invoicesPagination.items.map((invoice) => {
                       const paid = paidForInvoice(invoice.id);
                       const solde = invoice.amount - paid;
                       return (
@@ -974,8 +1214,8 @@ function App() {
                         <td>{solde > 0 ? <strong style={{ color: '#dc2626' }}>{formatFcfa(solde)}</strong> : <span className="chip green">Solde</span>}</td>
                         <td><span className={`chip ${invoiceStatusColors[invoice.status]}`}>{invoiceStatusLabels[invoice.status]}</span></td>
                         <td>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            {solde > 0 && (
+                          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                            {solde > 0 && invoice.status !== 'cancelled' && (
                               <button type="button" className="ghost-btn small-btn" onClick={() => { setPaymentForInvoice(invoice); setPaymentAmount(String(solde)); }}>Payer</button>
                             )}
                             <button
@@ -988,6 +1228,9 @@ function App() {
                             >
                               PDF
                             </button>
+                            {invoice.status !== 'cancelled' && (
+                              <button type="button" className="ghost-btn small-btn" onClick={() => handleCancelInvoice(invoice)}>Annuler</button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -997,155 +1240,24 @@ function App() {
                 </table>
                 </div>
               )}
+              <Pagination page={invoicesPagination.page} totalPages={invoicesPagination.totalPages} onPageChange={setInvoicesPage} />
             </article>
           </section>
         );
 
       case 'clients':
-        return (
-          <section className="section-stack">
-            <article className="panel-card">
-              <div className="panel-top">
-                <h4>Clients</h4>
-                <div className="panel-top-actions">
-                  <span>{clientsList.length} client(s)</span>
-                  {clientsList.length > 0 && (
-                    <>
-                      <button
-                        type="button"
-                        className="ghost-btn small-btn"
-                        onClick={() => exportTableToCsv({
-                          columns: ['Contact', 'Entreprise', 'Email', 'Telephone', 'Ville', 'Dossier archive'],
-                          rows: clientsList.map((c) => [c.name, c.company, c.email, c.phone, c.city || '-', c.archiveFolder || '-']),
-                          fileName: 'clients-vpns.csv',
-                        })}
-                      >
-                        CSV
-                      </button>
-                      <button
-                        type="button"
-                        className="ghost-btn small-btn"
-                        onClick={async () => {
-                          const { exportTableToPdf } = await import('./utils/pdfExport');
-                          exportTableToPdf({
-                            title: 'Clients',
-                            subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${clientsList.length} client(s)`,
-                            columns: ['Contact', 'Entreprise', 'Email', 'Telephone', 'Ville', 'Dossier archive'],
-                            rows: clientsList.map((c) => [c.name, c.company, c.email, c.phone, c.city || '-', c.archiveFolder || '-']),
-                            fileName: 'clients-vpns.pdf',
-                          });
-                        }}
-                      >
-                        Exporter PDF
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-              {clientsList.length === 0 ? (
-                <EmptyState
-                  title="Aucun client"
-                  description="Ajoutez votre premier client pour commencer l'archivage et la facturation."
-                />
-              ) : (
-                <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Contact</th>
-                      <th>Entreprise</th>
-                      <th>Email</th>
-                      <th>Telephone</th>
-                      <th>Ville</th>
-                      <th>Dossier archive</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {clientsList.map((client) => (
-                      <tr key={client.id}>
-                        <td>{client.name}</td>
-                        <td>{client.company}</td>
-                        <td>{client.email}</td>
-                        <td>{client.phone}</td>
-                        <td>{client.city || '-'}</td>
-                        <td>{client.archiveFolder}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                </div>
-              )}
-            </article>
-          </section>
-        );
+        return <ClientsSection clientsList={clientsList} onEdit={openEditClient} onDelete={handleDeleteClient} />;
 
       case 'agenda':
         return (
-          <section className="section-stack">
-            <div className="content-grid">
-              <article className="panel-card">
-                <div className="panel-top">
-                  <h4>Evenements a venir</h4>
-                  <span>{events.length} evenement(s)</span>
-                </div>
-                {events.length === 0 ? (
-                  <EmptyState
-                    title="Aucun evenement"
-                    description="Planifiez votre premier rendez-vous ou rappel."
-                  />
-                ) : (
-                  <div className="table-scroll">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Titre</th>
-                        <th>Date</th>
-                        <th>Heure</th>
-                        <th>Type</th>
-                        <th>Lieu</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {events.map((event) => (
-                        <tr key={event.id}>
-                          <td>{event.title}</td>
-                          <td>{formatDate(event.date)}</td>
-                          <td>{event.time}</td>
-                          <td>{event.type}</td>
-                          <td>{event.location || '-'}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  </div>
-                )}
-              </article>
-              <article className="panel-card">
-                <div className="panel-top">
-                  <h4>Calendrier</h4>
-                  <span>Mois en cours</span>
-                </div>
-                <MiniCalendar highlightDates={events.map((e) => e.date)} />
-              </article>
-            </div>
-
-            <article className="panel-card">
-              <div className="panel-top">
-                <h4>Agenda rapide</h4>
-                <span>Assistant</span>
-              </div>
-              <input
-                value={appointmentText}
-                onChange={(e) => setAppointmentText(e.target.value)}
-                placeholder="Ex: demain 14h reunion client"
-              />
-              <div className="parsed-box">
-                <p><strong>Titre :</strong> {parsedAppointment.title || 'A definir'}</p>
-                <p><strong>Date :</strong> {parsedAppointment.date || 'Non detectee'}</p>
-                <p><strong>Heure :</strong> {parsedAppointment.hour || 'Non detectee'}</p>
-              </div>
-            </article>
-          </section>
+          <AgendaSection
+            events={events}
+            appointmentText={appointmentText}
+            onAppointmentTextChange={setAppointmentText}
+            parsedAppointment={parsedAppointment}
+            onEdit={openEditEvent}
+            onDelete={handleDeleteEvent}
+          />
         );
 
       case 'documents':
@@ -1163,199 +1275,37 @@ function App() {
 
       case 'rapports':
         return (
-          <section className="section-stack">
-            <div className="exercise-bar">
-              <span>Exercice comptable (1er janvier - 31 decembre)</span>
-              <select value={selectedExercise} onChange={(e) => setSelectedExercise(Number(e.target.value))}>
-                {availableExercises.map((year) => (
-                  <option key={year} value={year}>{year}</option>
-                ))}
-              </select>
-            </div>
-
-            <article className="panel-card">
-              <div className="panel-top">
-                <h4>Repartition par categorie - Exercice {selectedExercise}</h4>
-                <span>Comptabilite</span>
-              </div>
-              {categoryBreakdown.length === 0 ? (
-                <p className="chart-empty-hint">Aucune donnee a visualiser pour le moment. Ajoutez des ecritures comptables.</p>
-              ) : (
-                <div className="cat-breakdown">
-                  {categoryBreakdown.map((row) => (
-                    <div className="cat-row" key={row.category}>
-                      <span>{row.category}</span>
-                      <div className="progress-track">
-                        <div className="progress-fill" style={{ width: `${row.pct}%`, background: 'var(--primary)' }} />
-                      </div>
-                      <span className="cat-pct">{row.pct}%</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </article>
-
-            <article className="panel-card">
-              <div className="panel-top">
-                <h4>Rapports generes</h4>
-                <div className="panel-top-actions">
-                  <span>{reports.length} rapport(s)</span>
-                  {reports.length > 0 && (
-                    <>
-                      <button
-                        type="button"
-                        className="ghost-btn small-btn"
-                        onClick={() => exportTableToCsv({
-                          columns: ['Titre', 'Type', 'Periode', 'Debut', 'Fin'],
-                          rows: reports.map((r) => [r.title, r.type, r.period, formatDate(r.startDate), formatDate(r.endDate)]),
-                          fileName: 'rapports-vpns.csv',
-                        })}
-                      >
-                        CSV
-                      </button>
-                      <button
-                        type="button"
-                        className="ghost-btn small-btn"
-                        onClick={async () => {
-                          const { exportTableToPdf } = await import('./utils/pdfExport');
-                          exportTableToPdf({
-                            title: 'Rapports generes',
-                            subtitle: `Export du ${new Date().toLocaleDateString('fr-FR')} - ${reports.length} rapport(s)`,
-                            columns: ['Titre', 'Type', 'Periode', 'Debut', 'Fin'],
-                            rows: reports.map((r) => [r.title, r.type, r.period, formatDate(r.startDate), formatDate(r.endDate)]),
-                            fileName: 'rapports-vpns.pdf',
-                          });
-                        }}
-                      >
-                        Exporter PDF
-                      </button>
-                    </>
-                  )}
-                </div>
-              </div>
-              {reports.length === 0 ? (
-                <EmptyState
-                  title="Aucun rapport"
-                  description="Generez votre premier rapport pour analyser votre activite."
-                />
-              ) : (
-                <div className="table-scroll">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Titre</th>
-                      <th>Type</th>
-                      <th>Periode</th>
-                      <th>Debut</th>
-                      <th>Fin</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {reports.map((report) => (
-                      <tr key={report.id}>
-                        <td>{report.title}</td>
-                        <td>{report.type}</td>
-                        <td>{report.period}</td>
-                        <td>{formatDate(report.startDate)}</td>
-                        <td>{formatDate(report.endDate)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                </div>
-              )}
-            </article>
-          </section>
+          <RapportsSection
+            selectedExercise={selectedExercise}
+            availableExercises={availableExercises}
+            onExerciseChange={setSelectedExercise}
+            categoryBreakdown={categoryBreakdown}
+            reports={reports}
+            onEdit={openEditReport}
+            onDelete={handleDeleteReport}
+          />
         );
 
       case 'notifications':
         return (
-          <section className="section-stack">
-            {systemNotifications.length > 0 && (
-              <article className="panel-card">
-                <div className="panel-top">
-                  <h4>Alertes automatiques</h4>
-                  <span>{systemNotifications.length} alerte(s)</span>
-                </div>
-                <div className="notif-types">
-                  {systemNotifications.map((notif) => (
-                    <div className="notif-type-row" key={notif.id}>
-                      <span className={`notif-dot ${notif.tone}`} />
-                      <span>{notif.title} - {notif.message}</span>
-                      <strong className="chip neutral">Systeme</strong>
-                    </div>
-                  ))}
-                </div>
-              </article>
-            )}
-
-            <article className="panel-card">
-              <div className="panel-top">
-                <h4>Notifications et relances</h4>
-                <span>{notifications.length} notification(s)</span>
-              </div>
-              {notifications.length === 0 ? (
-                <EmptyState
-                  title="Aucune notification"
-                  description="Programmez une relance ou une alerte pour vos clients."
-                />
-              ) : (
-                <div className="notif-types">
-                  {notifications.map((notif) => (
-                    <div className="notif-type-row" key={notif.id}>
-                      <span className={`notif-dot ${notificationDotColors[notif.type]}`} />
-                      <span>{notif.title} - {notif.message}</span>
-                      <strong>{formatDate(notif.sendDate)} {notif.sendTime}</strong>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </article>
-          </section>
+          <NotificationsSection
+            systemNotifications={systemNotifications}
+            notifications={notifications}
+            onEdit={openEditNotification}
+            onDelete={handleDeleteNotification}
+          />
         );
 
       case 'parametres':
         return (
-          <section className="section-stack">
-            <article className="panel-card">
-              <div className="panel-top">
-                <h4>Parametres</h4>
-                <span>Compte et preferences</span>
-              </div>
-              <div className="setting-grid">
-                <div className="setting-item">
-                  <div className="setting-icon" style={{ background: 'rgba(79,70,229,0.12)' }}>👤</div>
-                  <strong>Compte</strong>
-                  <p>{currentUser?.email}</p>
-                  <span>Administrateur</span>
-                </div>
-                <div className="setting-item">
-                  <div className="setting-icon" style={{ background: 'rgba(16,185,129,0.12)' }}>🔒</div>
-                  <strong>Securite</strong>
-                  <p>Authentification par identifiant unique</p>
-                  <span>Active</span>
-                </div>
-                <div className="setting-item">
-                  <div className="setting-icon" style={{ background: 'rgba(217,119,6,0.12)' }}>🔔</div>
-                  <strong>Notifications</strong>
-                  <p>{notifications.length} notification(s) programmee(s)</p>
-                  <span>Configure</span>
-                </div>
-                <div className="setting-item">
-                  <div className="setting-icon" style={{ background: 'rgba(6,182,212,0.12)' }}>💾</div>
-                  <strong>Donnees</strong>
-                  <p>{clientsList.length} clients - {invoices.length} factures - {entries.length} ecritures</p>
-                  <span>A jour</span>
-                </div>
-                <div className="setting-item">
-                  <div className="setting-icon" style={{ background: 'rgba(239,68,68,0.12)' }}>🚪</div>
-                  <strong>Session</strong>
-                  <p>Se deconnecter de VPNS Consulting</p>
-                  <button type="button" className="secondary-btn" onClick={handleLogout}>Se deconnecter</button>
-                </div>
-              </div>
-            </article>
-          </section>
+          <ParametresSection
+            userEmail={currentUser?.email}
+            notificationsCount={notifications.length}
+            clientsCount={clientsList.length}
+            invoicesCount={invoices.length}
+            entriesCount={entries.length}
+            onLogout={handleLogout}
+          />
         );
 
       default:
@@ -1515,16 +1465,43 @@ function App() {
         />
       )}
       {activeSection === 'clients' && (
-        <ClientModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={handleAddClient} />
+        <ClientModal
+          key={editingClient?.id || 'new'}
+          isOpen={isModalOpen}
+          onClose={() => { setIsModalOpen(false); setEditingClient(null); }}
+          onSubmit={handleAddClient}
+          initialData={editingClient ?? undefined}
+        />
       )}
       {activeSection === 'agenda' && (
-        <EventModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={handleAddEvent} clients={clientsForSelect} />
+        <EventModal
+          key={editingEvent?.id || 'new'}
+          isOpen={isModalOpen}
+          onClose={() => { setIsModalOpen(false); setEditingEvent(null); }}
+          onSubmit={handleAddEvent}
+          clients={clientsForSelect}
+          initialData={editingEvent ?? undefined}
+        />
       )}
       {activeSection === 'rapports' && (
-        <ReportModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={handleAddReport} clients={clientsForSelect} />
+        <ReportModal
+          key={editingReport?.id || 'new'}
+          isOpen={isModalOpen}
+          onClose={() => { setIsModalOpen(false); setEditingReport(null); }}
+          onSubmit={handleAddReport}
+          clients={clientsForSelect}
+          initialData={editingReport ?? undefined}
+        />
       )}
       {activeSection === 'notifications' && (
-        <NotificationModal isOpen={isModalOpen} onClose={() => setIsModalOpen(false)} onSubmit={handleAddNotification} clients={clientsForSelect} />
+        <NotificationModal
+          key={editingNotification?.id || 'new'}
+          isOpen={isModalOpen}
+          onClose={() => { setIsModalOpen(false); setEditingNotification(null); }}
+          onSubmit={handleAddNotification}
+          clients={clientsForSelect}
+          initialData={editingNotification ?? undefined}
+        />
       )}
 
       {paymentForInvoice && (
@@ -1566,6 +1543,14 @@ function App() {
           </div>
         </div>
       )}
+
+      <CahierJournalReviewModal
+        isOpen={cahierCandidates !== null}
+        onClose={() => setCahierCandidates(null)}
+        candidates={cahierCandidates || []}
+        onConfirm={handleConfirmCahierJournal}
+        isSubmitting={isSubmittingCahier}
+      />
 
       <div className="toast-stack">
         {toasts.map((toast) => (

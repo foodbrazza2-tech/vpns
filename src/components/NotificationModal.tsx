@@ -18,18 +18,19 @@ interface NotificationModalProps {
   onClose: () => void;
   onSubmit: (data: NotificationData) => void;
   clients?: Array<{ id: string; name: string }>;
+  initialData?: NotificationData;
 }
 
-export function NotificationModal({ isOpen, onClose, onSubmit, clients = [] }: NotificationModalProps) {
-  const [title, setTitle] = useState('');
-  const [message, setMessage] = useState('');
-  const [type, setType] = useState<'reminder' | 'alert' | 'success' | 'info'>('reminder');
-  const [priority, setPriority] = useState<'low' | 'medium' | 'high'>('medium');
-  const [sendDate, setSendDate] = useState(new Date().toISOString().split('T')[0]);
-  const [sendTime, setSendTime] = useState('09:00');
-  const [clientId, setClientId] = useState('');
-  const [recurring, setRecurring] = useState(false);
-  const [recurringDays, setRecurringDays] = useState(7);
+export function NotificationModal({ isOpen, onClose, onSubmit, clients = [], initialData }: NotificationModalProps) {
+  const [title, setTitle] = useState(initialData?.title || '');
+  const [message, setMessage] = useState(initialData?.message || '');
+  const [type, setType] = useState<'reminder' | 'alert' | 'success' | 'info'>(initialData?.type || 'reminder');
+  const [priority, setPriority] = useState<'low' | 'medium' | 'high'>(initialData?.priority || 'medium');
+  const [sendDate, setSendDate] = useState(initialData?.sendDate || new Date().toISOString().split('T')[0]);
+  const [sendTime, setSendTime] = useState(initialData?.sendTime || '09:00');
+  const [clientId, setClientId] = useState(initialData?.clientId || '');
+  const [recurring, setRecurring] = useState(initialData?.recurring ?? false);
+  const [recurringDays, setRecurringDays] = useState(initialData?.recurringDays ?? 7);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -79,7 +80,7 @@ export function NotificationModal({ isOpen, onClose, onSubmit, clients = [] }: N
         <div className="modal-header">
           <div>
             <p className="eyebrow">Notifications et relances</p>
-            <h3>Créer une nouvelle notification</h3>
+            <h3>{initialData ? 'Modifier la notification' : 'Créer une nouvelle notification'}</h3>
           </div>
           <button type="button" className="modal-close" onClick={onClose}>×</button>
         </div>
@@ -219,7 +220,7 @@ export function NotificationModal({ isOpen, onClose, onSubmit, clients = [] }: N
                 Annuler
               </button>
               <PrimaryButton type="submit" disabled={isSubmitting}>
-                {isSubmitting ? 'Création...' : 'Créer la notification'}
+                {isSubmitting ? 'Enregistrement...' : initialData ? 'Enregistrer les modifications' : 'Créer la notification'}
               </PrimaryButton>
             </div>
           </div>

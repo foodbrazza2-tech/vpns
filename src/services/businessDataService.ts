@@ -85,6 +85,44 @@ export async function createClient(data: ClientData): Promise<ClientRecord> {
   };
 }
 
+export async function updateClient(id: string, data: ClientData): Promise<ClientRecord> {
+  const result = await supabase
+    .from('clients')
+    .update({
+      name: data.name,
+      email: data.email,
+      phone: data.phone,
+      company: data.company,
+      address: data.address || null,
+      city: data.city || null,
+      tax_id: data.taxId || null,
+      archive_folder: data.archiveFolder || null,
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+  const row: any = unwrap(result, 'Mise a jour du client');
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    name: row.name,
+    email: row.email,
+    phone: row.phone,
+    company: row.company,
+    address: row.address || '',
+    city: row.city || '',
+    taxId: row.tax_id || '',
+    archiveFolder: row.archive_folder || '',
+  };
+}
+
+// Les factures/evenements/rapports/notifications existants gardent leur historique :
+// leur client_id passe simplement a null (contrainte "on delete set null" en base).
+export async function deleteClient(id: string): Promise<void> {
+  const { error } = await supabase.from('clients').delete().eq('id', id);
+  if (error) throw new Error(`Suppression du client: ${error.message}`);
+}
+
 // ═══════════════════════════════════════════
 // INVOICES
 // ═══════════════════════════════════════════
@@ -373,6 +411,42 @@ export async function createEvent(data: EventData): Promise<EventRecord> {
   };
 }
 
+export async function updateEvent(id: string, data: EventData): Promise<EventRecord> {
+  const result = await supabase
+    .from('events')
+    .update({
+      title: data.title,
+      description: data.description || null,
+      event_date: data.date,
+      event_time: data.time,
+      duration: data.duration,
+      client_id: data.clientId || null,
+      location: data.location || null,
+      type: data.type,
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+  const row: any = unwrap(result, "Mise a jour de l'evenement");
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    title: row.title,
+    description: row.description || '',
+    date: row.event_date,
+    time: row.event_time,
+    duration: row.duration,
+    clientId: row.client_id || undefined,
+    location: row.location || '',
+    type: row.type,
+  };
+}
+
+export async function deleteEvent(id: string): Promise<void> {
+  const { error } = await supabase.from('events').delete().eq('id', id);
+  if (error) throw new Error(`Suppression de l'evenement: ${error.message}`);
+}
+
 // ═══════════════════════════════════════════
 // REPORTS
 // ═══════════════════════════════════════════
@@ -421,6 +495,42 @@ export async function createReport(data: ReportData): Promise<ReportRecord> {
     includeGraphs: row.include_graphs,
     clientId: row.client_id || undefined,
   };
+}
+
+export async function updateReport(id: string, data: ReportData): Promise<ReportRecord> {
+  const result = await supabase
+    .from('reports')
+    .update({
+      title: data.title,
+      type: data.type,
+      period: data.period,
+      start_date: data.startDate,
+      end_date: data.endDate,
+      description: data.description || null,
+      include_graphs: data.includeGraphs,
+      client_id: data.clientId || null,
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+  const row: any = unwrap(result, 'Mise a jour du rapport');
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    title: row.title,
+    type: row.type,
+    period: row.period,
+    startDate: row.start_date,
+    endDate: row.end_date,
+    description: row.description || '',
+    includeGraphs: row.include_graphs,
+    clientId: row.client_id || undefined,
+  };
+}
+
+export async function deleteReport(id: string): Promise<void> {
+  const { error } = await supabase.from('reports').delete().eq('id', id);
+  if (error) throw new Error(`Suppression du rapport: ${error.message}`);
 }
 
 // ═══════════════════════════════════════════
@@ -474,4 +584,42 @@ export async function createNotification(data: NotificationData): Promise<Notifi
     recurring: row.recurring,
     recurringDays: row.recurring_days || undefined,
   };
+}
+
+export async function updateNotification(id: string, data: NotificationData): Promise<NotificationRecord> {
+  const result = await supabase
+    .from('notifications')
+    .update({
+      title: data.title,
+      message: data.message,
+      type: data.type,
+      priority: data.priority,
+      send_date: data.sendDate,
+      send_time: data.sendTime,
+      client_id: data.clientId || null,
+      recurring: data.recurring,
+      recurring_days: data.recurringDays || null,
+    })
+    .eq('id', id)
+    .select('*')
+    .single();
+  const row: any = unwrap(result, 'Mise a jour de la notification');
+  return {
+    id: row.id,
+    createdAt: row.created_at,
+    title: row.title,
+    message: row.message,
+    type: row.type,
+    priority: row.priority,
+    sendDate: row.send_date,
+    sendTime: row.send_time,
+    clientId: row.client_id || undefined,
+    recurring: row.recurring,
+    recurringDays: row.recurring_days || undefined,
+  };
+}
+
+export async function deleteNotification(id: string): Promise<void> {
+  const { error } = await supabase.from('notifications').delete().eq('id', id);
+  if (error) throw new Error(`Suppression de la notification: ${error.message}`);
 }

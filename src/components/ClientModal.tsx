@@ -16,19 +16,22 @@ interface ClientModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSubmit: (data: ClientData) => void;
+  initialData?: ClientData;
 }
 
-export function ClientModal({ isOpen, onClose, onSubmit }: ClientModalProps) {
-  const [formData, setFormData] = useState<ClientData>({
-    name: '',
-    email: '',
-    phone: '',
-    company: '',
-    address: '',
-    city: '',
-    taxId: '',
-    archiveFolder: '',
-  });
+export function ClientModal({ isOpen, onClose, onSubmit, initialData }: ClientModalProps) {
+  const [formData, setFormData] = useState<ClientData>(
+    initialData || {
+      name: '',
+      email: '',
+      phone: '',
+      company: '',
+      address: '',
+      city: '',
+      taxId: '',
+      archiveFolder: '',
+    }
+  );
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -70,7 +73,7 @@ export function ClientModal({ isOpen, onClose, onSubmit }: ClientModalProps) {
         <div className="modal-header">
           <div>
             <p className="eyebrow">Gestion des clients</p>
-            <h3>Ajouter un nouveau client</h3>
+            <h3>{initialData ? 'Modifier le client' : 'Ajouter un nouveau client'}</h3>
           </div>
           <button type="button" className="modal-close" onClick={onClose}>×</button>
         </div>
@@ -188,7 +191,7 @@ export function ClientModal({ isOpen, onClose, onSubmit }: ClientModalProps) {
                 Annuler
               </button>
               <PrimaryButton type="submit" disabled={isSubmitting}>
-                {isSubmitting ? 'Création...' : 'Ajouter le client'}
+                {isSubmitting ? 'Enregistrement...' : initialData ? 'Enregistrer les modifications' : 'Ajouter le client'}
               </PrimaryButton>
             </div>
           </div>
