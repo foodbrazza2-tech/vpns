@@ -9,6 +9,13 @@
 -- ═══════════════════════════════════════════
 -- Fonction utilitaire : ajoute owner_id + son index + ses 4 politiques
 -- CRUD scopees, en remplacement des anciennes politiques "using (true)".
+--
+-- auth.uid() renvoie NULL hors d'une session authentifiee (ex: execute ici
+-- depuis le SQL Editor) - donc si une table contient deja des lignes, un
+-- "not null default auth.uid()" direct echoue (colonne NOT NULL backfillee a
+-- NULL). On ajoute la colonne nullable d'abord, on rattache les lignes
+-- existantes au compte autorise, puis on applique NOT NULL + le defaut (qui,
+-- lui, fonctionnera normalement pour les futures lignes creees par l'app).
 -- ═══════════════════════════════════════════
 do $$
 declare
@@ -18,9 +25,17 @@ declare
     'events', 'reports', 'notifications', 'client_archives',
     'archive_documents', 'error_logs'
   ];
+  owner_uuid uuid;
 begin
+  select id into owner_uuid from auth.users where email = 'edson@gmail.com' limit 1;
+
   foreach t in array tables loop
-    execute format('alter table public.%I add column if not exists owner_id uuid not null default auth.uid() references auth.users(id) on delete cascade', t);
+    execute format('alter table public.%I add column if not exists owner_id uuid references auth.users(id) on delete cascade', t);
+    if owner_uuid is not null then
+      execute format('update public.%I set owner_id = %L where owner_id is null', t, owner_uuid);
+    end if;
+    execute format('alter table public.%I alter column owner_id set not null', t);
+    execute format('alter table public.%I alter column owner_id set default auth.uid()', t);
     execute format('create index if not exists idx_%s_owner_id on public.%I(owner_id)', t, t);
   end loop;
 end $$;
