@@ -23,10 +23,11 @@ interface SidebarProps {
   onClose: () => void;
   userName?: string;
   onLogout?: () => void;
+  onShowHelp?: () => void;
   notificationCount?: number;
 }
 
-export default function Sidebar({ activeSection, onSelectSection, isOpen, onClose, userName, onLogout, notificationCount = 0 }: SidebarProps) {
+export default function Sidebar({ activeSection, onSelectSection, isOpen, onClose, userName, onLogout, onShowHelp, notificationCount = 0 }: SidebarProps) {
   return (
     <aside className={`sidebar ${isOpen ? 'open' : ''}`.trim()}>
       <div className="sidebar-head">
@@ -68,6 +69,11 @@ export default function Sidebar({ activeSection, onSelectSection, isOpen, onClos
             <p className="user-name">{userName}</p>
             <p className="user-role">Administrateur</p>
           </div>
+          {onShowHelp && (
+            <button type="button" className="help-toggle-btn" onClick={onShowHelp} title="Reafficher tous les conseils d'utilisation">
+              💡 Aide
+            </button>
+          )}
           {onLogout && (
             <button type="button" className="logout-btn" onClick={onLogout}>
               Se deconnecter

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import EmptyState from '../components/EmptyState';
 import { Pagination } from '../components/Pagination';
+import { HelpHint } from '../components/HelpHint';
 import { formatDate } from '../utils/format';
 import { paginate, DEFAULT_PAGE_SIZE } from '../utils/pagination';
 import type { NotificationRecord } from '../services/businessDataService';
@@ -34,6 +35,10 @@ export function NotificationsSection({ systemNotifications, notifications, onEdi
 
   return (
     <section className="section-stack">
+      <HelpHint id="notifications">
+        Les <strong>"Alertes automatiques"</strong> apparaissent toutes seules (factures en retard, evenements proches).
+        Cliquez sur <strong>"Nouvelle notification"</strong> en haut de la page pour programmer vous-meme une relance ou un rappel.
+      </HelpHint>
       {systemNotifications.length > 0 && (
         <article className="panel-card">
           <div className="panel-top">

@@ -121,6 +121,21 @@ button, input, select, textarea { font: inherit; }
 .sidebar .logout-btn:hover {
    background: rgba(255, 255, 255, 0.16);
 }
+.sidebar .help-toggle-btn {
+   background: rgba(255, 255, 255, 0.08);
+   border: 1px solid rgba(255, 255, 255, 0.15);
+   color: #f1f5f9;
+   width: 100%;
+   padding: 10px 14px;
+   border-radius: 10px;
+   cursor: pointer;
+   font-size: 0.85rem;
+   margin-bottom: 8px;
+   transition: background 160ms ease;
+}
+.sidebar .help-toggle-btn:hover {
+   background: rgba(255, 255, 255, 0.16);
+}
 .menu-toggle { border: 1px solid rgba(79, 70, 229, 0.24); background: linear-gradient(135deg, var(--primary), rgba(99,102,241,0.9)); color: white; font-weight: 700; padding: 11px 16px; border-radius: 14px; cursor: pointer; transition: all 200ms ease; min-height: 46px; display: flex; align-items: center; justify-content: center; gap: 8px; font-size: 1rem; box-shadow: 0 4px 12px rgba(79, 70, 229, 0.2); }
 .menu-toggle:hover { background: linear-gradient(135deg, #3730a3, #4f46e5); box-shadow: 0 6px 16px rgba(79, 70, 229, 0.3); transform: translateY(-1px); }
 .menu-toggle:active { transform: scale(0.96); }
@@ -414,6 +429,11 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
 .toast-info { border-left-color: #3b82f6; }
 .toast-close { border: 0; background: transparent; color: var(--muted); font-size: 16px; cursor: pointer; line-height: 1; }
 .import-hint { background: rgba(79,70,229,0.08); color: var(--primary-dark); border: 1px dashed rgba(79,70,229,0.3); border-radius: 12px; padding: 10px 12px; font-size: 0.85rem; }
+.help-hint { display: flex; align-items: flex-start; gap: 10px; background: rgba(217,119,6,0.08); border: 1px solid rgba(217,119,6,0.25); border-radius: 12px; padding: 12px 14px; font-size: 0.88rem; color: #7c4a03; line-height: 1.5; }
+.help-hint-icon { font-size: 1.05rem; flex-shrink: 0; }
+.help-hint-text { flex: 1; }
+.help-hint-close { border: 0; background: transparent; color: #7c4a03; font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; opacity: 0.7; }
+.help-hint-close:hover { opacity: 1; }
 .panel-top-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .small-btn { padding: 7px 12px; font-size: 0.8rem; border-radius: 999px; }
 .file-import-label { display: inline-flex; align-items: center; justify-content: center; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--border); background: white; color: #334155; cursor: pointer; font-size: 0.8rem; font-weight: 600; transition: background 160ms ease; }

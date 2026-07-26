@@ -2,6 +2,7 @@ import { useState } from 'react';
 import EmptyState from '../components/EmptyState';
 import { MiniCalendar } from '../components/MiniCalendar';
 import { Pagination } from '../components/Pagination';
+import { HelpHint } from '../components/HelpHint';
 import { formatDate } from '../utils/format';
 import { paginate, DEFAULT_PAGE_SIZE } from '../utils/pagination';
 import type { EventRecord } from '../services/businessDataService';
@@ -27,6 +28,10 @@ export function AgendaSection({ events, appointmentText, onAppointmentTextChange
 
   return (
     <section className="section-stack">
+      <HelpHint id="agenda">
+        Cliquez sur <strong>"Nouvel evenement"</strong> en haut de la page pour planifier un rendez-vous.
+        Ou tapez une phrase simple ci-dessous (ex: "demain 14h reunion client") : l'application detecte la date et l'heure toute seule.
+      </HelpHint>
       <div className="content-grid">
         <article className="panel-card">
           <div className="panel-top">

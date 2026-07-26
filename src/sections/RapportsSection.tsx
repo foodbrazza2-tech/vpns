@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import EmptyState from '../components/EmptyState';
 import { Pagination } from '../components/Pagination';
+import { HelpHint } from '../components/HelpHint';
 import { exportTableToCsv } from '../utils/csvExport';
 import { formatDate } from '../utils/format';
 import { paginate, DEFAULT_PAGE_SIZE } from '../utils/pagination';
@@ -36,6 +37,10 @@ export function RapportsSection({
 
   return (
     <section className="section-stack">
+      <HelpHint id="rapports">
+        Choisissez l'exercice comptable ci-dessous, puis cliquez sur <strong>"Nouveau rapport"</strong> en haut de la page pour en generer un.
+        Les boutons <strong>CSV</strong> et <strong>Exporter PDF</strong> telechargent la repartition et la liste des rapports.
+      </HelpHint>
       <div className="exercise-bar">
         <span>Exercice comptable (1er janvier - 31 decembre)</span>
         <select value={selectedExercise} onChange={(e) => onExerciseChange(Number(e.target.value))}>

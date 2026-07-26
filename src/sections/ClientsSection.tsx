@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import EmptyState from '../components/EmptyState';
 import { Pagination } from '../components/Pagination';
+import { HelpHint } from '../components/HelpHint';
 import { exportTableToCsv } from '../utils/csvExport';
 import { paginate, DEFAULT_PAGE_SIZE } from '../utils/pagination';
 import type { ClientRecord } from '../services/businessDataService';
@@ -17,6 +18,10 @@ export function ClientsSection({ clientsList, onEdit, onDelete }: ClientsSection
 
   return (
     <section className="section-stack">
+      <HelpHint id="clients">
+        Cliquez sur <strong>"Nouveau client"</strong> en haut de la page pour ajouter un client.
+        Pour modifier ou supprimer un client existant, utilisez les boutons <strong>"Modifier"</strong> et <strong>"Supprimer"</strong> a cote de son nom dans le tableau.
+      </HelpHint>
       <article className="panel-card">
         <div className="panel-top">
           <h4>Clients</h4>

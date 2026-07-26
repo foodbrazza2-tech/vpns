@@ -21,6 +21,7 @@ import { detectDocumentKind, detectTransferDirection, entryForBankTransfer, entr
 import { makeId, formatFcfa, formatDate, yearOf } from './utils/format';
 import { paginate, DEFAULT_PAGE_SIZE } from './utils/pagination';
 import { Pagination } from './components/Pagination';
+import { HelpHint, resetAllHints } from './components/HelpHint';
 import { ClientsSection } from './sections/ClientsSection';
 import { AgendaSection } from './sections/AgendaSection';
 import { RapportsSection } from './sections/RapportsSection';
@@ -130,6 +131,7 @@ function App() {
   const [appointmentText, setAppointmentText] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isDrawerOpen, setIsDrawerOpen] = useState(false);
+  const [helpResetKey, setHelpResetKey] = useState(0);
 
   const [entries, setEntries] = useState<EntryRecord[]>([]);
   const [clientsList, setClientsList] = useState<ClientRecord[]>([]);
@@ -807,6 +809,11 @@ function App() {
               <button type="button" className={`tab-btn ${comptaTab === 'caisse' ? 'active' : ''}`} onClick={() => setComptaTab('caisse')}>Journal de Caisse</button>
             </div>
 
+            <HelpHint id="comptabilite">
+              Vous n'avez presque rien a saisir ici : chaque facture et chaque paiement enregistre cree automatiquement les bonnes ecritures.
+              Utilisez les onglets ci-dessus pour naviguer entre le Journal, le Grand Livre, la Balance, le Bilan et le Journal de Caisse.
+            </HelpHint>
+
             {comptaTab === 'journal' && (
               <>
                 <div className="skpi-row">
@@ -1087,6 +1094,10 @@ function App() {
       case 'factures':
         return (
           <section className="section-stack">
+            <HelpHint id="factures">
+              Cliquez sur <strong>"Importer un document"</strong> (photo ou PDF d'une facture recue) : l'application lit le document et cree
+              automatiquement la facture ET l'ecriture comptable, sans rien a taper. Ou cliquez sur <strong>"Nouvelle facture"</strong> en haut de la page pour la saisir vous-meme.
+            </HelpHint>
             <div className="exercise-bar">
               <span>Exercice comptable (1er janvier - 31 decembre)</span>
               <select value={selectedExercise} onChange={(e) => setSelectedExercise(Number(e.target.value))}>
@@ -1311,6 +1322,11 @@ function App() {
       default:
         return (
           <>
+            <HelpHint id="dashboard">
+              Bienvenue sur VPNS Consulting. Utilisez le menu a gauche pour naviguer : <strong>Factures</strong> pour importer/creer des factures,
+              <strong> Comptabilite</strong> pour voir le journal et la caisse, <strong>Clients</strong>, <strong>Agenda</strong> et <strong>Documents</strong> pour le reste.
+              La plupart des ecritures comptables se font toutes seules des que vous creez une facture ou un paiement.
+            </HelpHint>
             <section className="hero-banner">
               <div className="hero-banner-left">
                 <p className="eyebrow">Tableau de bord</p>
@@ -1418,6 +1434,7 @@ function App() {
         onClose={() => setIsDrawerOpen(false)}
         userName={currentUser.name}
         onLogout={handleLogout}
+        onShowHelp={() => { resetAllHints(); setHelpResetKey((k) => k + 1); pushToast('Les conseils d\'utilisation sont de nouveau affiches.', 'info'); }}
         notificationCount={totalActiveAlerts}
       />
 
@@ -1443,7 +1460,7 @@ function App() {
                 <p>Chargement de vos donnees...</p>
               </div>
             ) : (
-              renderSection()
+              <div key={`${activeSection}-${helpResetKey}`}>{renderSection()}</div>
             )}
           </div>
         </main>

@@ -1,3 +1,4 @@
+import { HelpHint } from '../components/HelpHint';
 import { formatFcfa, formatDate } from '../utils/format';
 import type { JournalCaisse } from '../utils/comptaReports';
 
@@ -22,6 +23,11 @@ export function CaisseJournalPanel({
 }: CaisseJournalPanelProps) {
   return (
     <div className="section-stack">
+      <HelpHint id="caisse">
+        Prenez simplement une photo de votre cahier de caisse et cliquez sur <strong>"Importer un cahier journal (photo)"</strong> plus bas :
+        l'application lit chaque ligne, devine ce qui est une entree ou une sortie, et vous montre le resultat pour verification avant d'enregistrer quoi que ce soit.
+        Vous n'avez rien a taper vous-meme.
+      </HelpHint>
       <div className="exercise-bar">
         <span>Exercice comptable (1er janvier - 31 decembre)</span>
         <select value={selectedExercise} onChange={(e) => onExerciseChange(Number(e.target.value))}>
