@@ -6,7 +6,11 @@
 // Un fichier corrompu, un scan illisible ou un souci reseau (chargement des
 // donnees de langue OCR) ne doivent jamais faire planter l'import - on retombe
 // alors sur la transcription par nom de fichier, geree par l'appelant.
-const OCR_TIMEOUT_MS = 30000;
+// Le chargement du worker (qui telecharge ~6 Mo de donnees de langue la
+// premiere fois) a besoin de plus de marge que la reconnaissance elle-meme
+// (calcul local, plus rapide) sur une connexion mobile lente.
+const WORKER_LOAD_TIMEOUT_MS = 60000;
+const RECOGNIZE_TIMEOUT_MS = 30000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return Promise.race([
@@ -15,17 +19,62 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   ]);
 }
 
+// Une photo prise au telephone (eclairage inegal, faible contraste, parfois
+// petite resolution) donne une bien moins bonne reconnaissance qu'un scan
+// propre. On agrandit les petites images et on convertit en niveaux de gris
+// avec un contraste renforce avant l'OCR - une preparation standard qui
+// ameliore nettement la lecture de texte sur une photo. En cas d'echec
+// (canvas indisponible, image corrompue), on retombe sur le fichier original.
+async function preprocessImageForOcr(file: File): Promise<File | HTMLCanvasElement> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const canvas = document.createElement('canvas');
+    const scale = bitmap.width < 1500 ? 1500 / bitmap.width : 1;
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return file;
+
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const data = imageData.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const gray = data[i] * 0.299 + data[i + 1] * 0.587 + data[i + 2] * 0.114;
+      const contrasted = Math.min(255, Math.max(0, (gray - 128) * 1.6 + 128));
+      data[i] = data[i + 1] = data[i + 2] = contrasted;
+    }
+    ctx.putImageData(imageData, 0, 0);
+    return canvas;
+  } catch {
+    return file;
+  }
+}
+
 async function ocrImageSource(source: File | HTMLCanvasElement): Promise<string> {
   try {
     const { createWorker } = await import('tesseract.js');
-    const worker = await withTimeout(createWorker('fra'), OCR_TIMEOUT_MS);
+    // tesseract.js va par defaut chercher son worker, son moteur WASM et ses
+    // donnees de langue sur le CDN jsdelivr - or ce CDN s'est avere injoignable
+    // dans certains environnements, ce qui faisait echouer l'OCR en silence a
+    // chaque import et forcait une saisie manuelle systematique. Les trois sont
+    // maintenant auto-heberges sur ce meme domaine (voir public/tessdata).
+    const worker = await withTimeout(
+      createWorker('fra', undefined, {
+        langPath: '/tessdata',
+        workerPath: '/tessdata/worker.min.js',
+        corePath: '/tessdata/core',
+      }),
+      WORKER_LOAD_TIMEOUT_MS
+    );
     try {
-      const { data } = await withTimeout(worker.recognize(source), OCR_TIMEOUT_MS);
+      const target = source instanceof File ? await preprocessImageForOcr(source) : source;
+      const { data } = await withTimeout(worker.recognize(target), RECOGNIZE_TIMEOUT_MS);
       return data.text || '';
     } finally {
       await worker.terminate();
     }
-  } catch {
+  } catch (e) {
+    console.error('OCR echec (retombee sur la transcription par nom de fichier):', e);
     return '';
   }
 }
