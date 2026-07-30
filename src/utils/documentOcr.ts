@@ -113,7 +113,8 @@ async function extractPdfContent(file: File): Promise<string> {
     if (!ctx) return text;
     await page.render({ canvasContext: ctx, viewport, canvas }).promise;
     return ocrImageSource(canvas);
-  } catch {
+  } catch (e) {
+    console.error('Lecture PDF echouee (retombee sur la transcription par nom de fichier):', e);
     return '';
   }
 }
