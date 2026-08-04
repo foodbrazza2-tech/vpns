@@ -194,10 +194,13 @@ export async function parseInvoiceFromFile(file: File): Promise<ImportedInvoiceD
 
   // On cherche le montant d'abord dans le contenu du document (plus fiable), et on
   // retire le numero de facture du texte pour ne pas capter ses chiffres. Le nom
-  // du fichier n'est utilise qu'en dernier recours.
+  // du fichier n'est utilise qu'en dernier recours. La plupart des documents
+  // importes (fiche de paye, releve bancaire...) n'ont pas ce format de numero -
+  // sans garde, split('') sur une chaine vide coupe le texte caractere par
+  // caractere et detruit tous les montants/dates.
   const invoiceToken = invoiceNumberMatch ? invoiceNumberMatch[1] : '';
-  const contentClean = content.split(invoiceToken).join(' ');
-  const nameClean = nameWithoutExt.split(invoiceToken).join(' ');
+  const contentClean = invoiceToken ? content.split(invoiceToken).join(' ') : content;
+  const nameClean = invoiceToken ? nameWithoutExt.split(invoiceToken).join(' ') : nameWithoutExt;
 
   const contentAmounts = extractAmounts(contentClean);
   const amounts = contentAmounts.length > 0 ? contentAmounts : extractAmounts(nameClean);
@@ -210,12 +213,17 @@ export async function parseInvoiceFromFile(file: File): Promise<ImportedInvoiceD
   const invoiceDate = detectedDate ? new Date(`${detectedDate}T00:00:00`) : today;
   const due = new Date(invoiceDate);
   due.setDate(due.getDate() + 30);
+  // toISOString() convertit en UTC : pour un fuseau en avance sur UTC (Congo-
+  // Brazzaville = UTC+1), minuit local devient la veille en UTC et decale la
+  // date d'un jour. On relit les composants en heure locale (symetrique avec
+  // le parsing ci-dessus) pour que la date affichee soit bien celle du document.
+  const toIsoDate = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
   return {
     invoiceNumber,
     amount,
-    date: invoiceDate.toISOString().split('T')[0],
-    dueDate: due.toISOString().split('T')[0],
+    date: toIsoDate(invoiceDate),
+    dueDate: toIsoDate(due),
     description: content ? content.slice(0, 200).replace(/\s+/g, ' ').trim() : `Importe depuis ${file.name}`,
     vendorName: extractVendorName(contentClean),
     fullText: content,
