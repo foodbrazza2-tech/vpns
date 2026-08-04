@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { entriesForInvoice, entryForPayment, detectInvoiceType, detectDocumentKind, detectTransferDirection, entryForBankTransfer, compteTresorerie } from './autoAccounting';
+import { entriesForInvoice, entryForPayment, detectInvoiceType, detectDocumentKind, detectTransferDirection, entryForBankTransfer, entryForFichePaye, compteTresorerie } from './autoAccounting';
 
 const vente = {
   type: 'vente' as const,
@@ -70,28 +70,56 @@ describe('Comptabilisation auto - REGLEMENT (journal banque)', () => {
 });
 
 describe('Detection vente/achat a l\'import', () => {
-  it('detecte un achat', () => {
+  it('detecte un achat via mots-cles explicites', () => {
     expect(detectInvoiceType('Facture d\'achat fournisseur XYZ, a payer')).toBe('achat');
   });
-  it('defaut = vente', () => {
-    expect(detectInvoiceType('Facture de prestation pour le client')).toBe('vente');
+  it('defaut = achat (un document importe est presque toujours une piece recue)', () => {
+    expect(detectInvoiceType('Facture de prestation pour le client')).toBe('achat');
+  });
+  it('detecte une vente uniquement via les signaux propres au modele VPNS (numero, NIU, RCCM, DOIT)', () => {
+    expect(detectInvoiceType('FACTURE N°03/DG/VPNS/2026')).toBe('vente');
+    expect(detectInvoiceType('NIU: P2018110005078220')).toBe('vente');
+    expect(detectInvoiceType('RCCM: CG /BZV/18 A 23443')).toBe('vente');
+    expect(detectInvoiceType('DOIT : Cartouche Market')).toBe('vente');
   });
 });
 
-describe('Detection du type de document a l\'import (facture vs virement)', () => {
-  it('detecte un bordereau de virement bancaire', () => {
+describe('Detection du type de document a l\'import (facture, virement, fiche de paye, releve)', () => {
+  it('detecte un bordereau de virement bancaire (mouvement unique)', () => {
     expect(detectDocumentKind('Bordereau de virement bancaire - BGFI Bank')).toBe('virement_bancaire');
   });
-  it('detecte un releve bancaire', () => {
-    expect(detectDocumentKind('Relevé bancaire du compte IBAN CG...')).toBe('virement_bancaire');
+  it('detecte un releve bancaire (plusieurs operations, pas un virement unique)', () => {
+    expect(detectDocumentKind('Relevé bancaire du compte IBAN CG...')).toBe('releve_bancaire');
+    expect(detectDocumentKind('Relevé de compte - periode juin 2026')).toBe('releve_bancaire');
   });
-  it('retombe sur vente/achat pour une facture normale', () => {
-    expect(detectDocumentKind('Facture de prestation pour le client')).toBe('vente');
+  it('detecte une fiche de paye', () => {
+    expect(detectDocumentKind('Fiche de paie - Juin 2026 - Salaire net a payer: 150 000')).toBe('fiche_paye');
+    expect(detectDocumentKind('Bulletin de salaire du mois de juin')).toBe('fiche_paye');
+  });
+  it('retombe sur achat pour une facture recue sans signal VPNS', () => {
+    expect(detectDocumentKind('Facture de prestation pour le client')).toBe('achat');
     expect(detectDocumentKind('Facture d\'achat fournisseur, a payer')).toBe('achat');
+  });
+  it('reconnait une facture emise par VPNS elle-meme comme une vente', () => {
+    expect(detectDocumentKind('FACTURE N°03/DG/VPNS/2026 DOIT : Client X')).toBe('vente');
   });
   it('detecte le sens du virement', () => {
     expect(detectTransferDirection('Virement recu de MTN Congo')).toBe('entrant');
     expect(detectTransferDirection('Virement emis au beneficiaire XYZ')).toBe('sortant');
+  });
+});
+
+describe('Comptabilisation auto - FICHE DE PAYE (charge de personnel, compte 661)', () => {
+  it('genere 661 debit / tresorerie credit pour le montant net verse', () => {
+    const e = entryForFichePaye({ date: '2026-06-30', amount: 150000, method: 'virement', description: 'Salaire juin 2026' });
+    expect(e.debitAccount).toBe('661');
+    expect(e.creditAccount).toBe('5211'); // banque (virement)
+    expect(e.amount).toBe(150000);
+    expect(e.journal).toBe('od');
+  });
+  it('paye en especes -> credit caisse', () => {
+    const e = entryForFichePaye({ date: '2026-06-30', amount: 80000, method: 'especes', description: 'Salaire employe X' });
+    expect(e.creditAccount).toBe('5711');
   });
 });
 

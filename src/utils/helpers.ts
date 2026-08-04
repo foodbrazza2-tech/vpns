@@ -97,6 +97,9 @@ export type ImportedInvoiceData = {
   dueDate: string;
   description: string;
   vendorName: string | null;
+  // Contenu integral extrait (non tronque), pour les documents multi-lignes
+  // (releve bancaire...) ou "description" (tronquee a 200 caracteres) ne suffit pas.
+  fullText: string;
 };
 
 const FRENCH_MONTHS: Record<string, number> = {
@@ -215,6 +218,7 @@ export async function parseInvoiceFromFile(file: File): Promise<ImportedInvoiceD
     dueDate: due.toISOString().split('T')[0],
     description: content ? content.slice(0, 200).replace(/\s+/g, ' ').trim() : `Importe depuis ${file.name}`,
     vendorName: extractVendorName(contentClean),
+    fullText: content,
   };
 }
 

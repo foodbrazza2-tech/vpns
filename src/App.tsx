@@ -17,7 +17,7 @@ import AuthService from './services/authService';
 import { parseAppointmentText, parseQuickEntry, parseInvoiceFromFile } from './utils/helpers';
 import { exportTableToCsv } from './utils/csvExport';
 import { afficherCompte, classeDuCompte } from './data/planComptable';
-import { detectDocumentKind, detectTransferDirection, entryForBankTransfer, entryForCaisseBanqueTransfer } from './utils/autoAccounting';
+import { detectDocumentKind, detectTransferDirection, entryForBankTransfer, entryForCaisseBanqueTransfer, entryForFichePaye } from './utils/autoAccounting';
 import { makeId, formatFcfa, formatDate, yearOf } from './utils/format';
 import { paginate, DEFAULT_PAGE_SIZE } from './utils/pagination';
 import { Pagination } from './components/Pagination';
@@ -160,6 +160,9 @@ function App() {
   const [isImportingCahier, setIsImportingCahier] = useState(false);
   const [isSubmittingCahier, setIsSubmittingCahier] = useState(false);
   const [cahierCandidates, setCahierCandidates] = useState<CandidateCaisseOperation[] | null>(null);
+  // Compte de tresorerie cible pour les operations validees : Caisse pour un
+  // cahier journal papier, Banque pour un releve bancaire importe.
+  const [cahierTresorerieAccount, setCahierTresorerieAccount] = useState<string>(COMPTE.CAISSE);
 
   // Edition : quand une de ces valeurs est non-nulle, le modal correspondant s'ouvre
   // pre-rempli et la soumission met a jour l'enregistrement au lieu d'en creer un.
@@ -287,9 +290,45 @@ function App() {
     setIsImportingInvoice(true);
     try {
       const parsed = await parseInvoiceFromFile(file);
-      const fullText = `${file.name} ${parsed.description}`;
+      // Le texte integral (pas seulement l'apercu tronque a 200 caracteres) est
+      // utilise pour la classification et le decoupage multi-lignes : un mot-cle
+      // determinant peut apparaitre plus loin dans un document long.
+      const fullText = `${file.name} ${parsed.fullText || parsed.description}`;
       const documentKind = detectDocumentKind(fullText);
       const ht = parsed.amount || 0;
+
+      if (documentKind === 'releve_bancaire') {
+        // Un releve bancaire liste plusieurs operations, comme un cahier journal -
+        // on reutilise le meme decoupage + la meme modale de verification, mais sur
+        // le compte Banque plutot que Caisse.
+        const candidates = parseCahierJournalLines(parsed.fullText || '', parsed.date);
+        if (candidates.length === 0) {
+          pushToast("Releve bancaire importe mais aucune operation n'a ete detectee. Verifiez la qualite de l'image.", 'info');
+          return;
+        }
+        setCahierTresorerieAccount(COMPTE.BANQUE);
+        setCahierCandidates(candidates);
+        return;
+      }
+
+      if (documentKind === 'fiche_paye') {
+        if (ht <= 0) {
+          pushToast('Fiche de paye importee mais montant illisible. Saisissez la charge manuellement.', 'info');
+          return;
+        }
+        const method = /\b(especes|liquide|cash)\b/i.test(fullText) ? 'especes' : 'virement';
+        const generated = entryForFichePaye({
+          date: parsed.date,
+          amount: ht,
+          method,
+          description: parsed.vendorName ? `Salaire - ${parsed.vendorName}` : `Salaire (${parsed.invoiceNumber})`,
+          reference: parsed.invoiceNumber,
+        });
+        const record = await createAccountingEntry(generated);
+        setEntries((prev) => [record, ...prev]);
+        pushToast('Fiche de paye importee et comptabilisee automatiquement (charge de personnel, compte 661).');
+        return;
+      }
 
       if (documentKind === 'virement_bancaire' || documentKind === 'versement' || documentKind === 'retrait') {
         if (ht <= 0) {
@@ -367,6 +406,9 @@ function App() {
   const handleImportCahierJournal = async (file: File) => {
     setIsImportingCahier(true);
     try {
+      // Bouton dedie au cahier journal papier -> toujours la Caisse, meme si un
+      // import de releve bancaire precedent avait bascule le compte sur Banque.
+      setCahierTresorerieAccount(COMPTE.CAISSE);
       const { extractDocumentContent } = await import('./utils/documentOcr');
       const text = await extractDocumentContent(file);
       const candidates = parseCahierJournalLines(text, new Date().toISOString().split('T')[0]);
@@ -382,12 +424,15 @@ function App() {
     }
   };
 
-  // Enregistre les operations validees par l'utilisateur : chaque entree est
-  // comptabilisee comme une vente encaissee (debit Caisse / credit Vente), chaque
-  // sortie comme une depense (debit compte de charge suggere / credit Caisse).
+  // Enregistre les operations validees par l'utilisateur, sur le compte de
+  // tresorerie cible (Caisse pour un cahier journal papier, Banque pour un
+  // releve bancaire importe) : chaque entree est une recette encaissee (debit
+  // tresorerie / credit Vente), chaque sortie une depense (debit compte de
+  // charge suggere / credit tresorerie).
   const handleConfirmCahierJournal = async (operations: ConfirmedCaisseOperation[]) => {
     setIsSubmittingCahier(true);
     try {
+      const isBanque = cahierTresorerieAccount === COMPTE.BANQUE;
       const created: EntryRecord[] = [];
       for (const op of operations) {
         const isEntree = op.sens === 'entree';
@@ -395,17 +440,17 @@ function App() {
         const data: AccountingEntryData = {
           date: op.date,
           description: op.description,
-          debitAccount: isEntree ? COMPTE.CAISSE : (suggestion?.account || '6051'),
-          creditAccount: isEntree ? COMPTE.VENTE_DEFAUT : COMPTE.CAISSE,
+          debitAccount: isEntree ? cahierTresorerieAccount : (suggestion?.account || '6051'),
+          creditAccount: isEntree ? COMPTE.VENTE_DEFAUT : cahierTresorerieAccount,
           amount: op.amount,
           category: isEntree ? 'vente' : (suggestion?.category || 'Divers'),
-          journal: isEntree ? 'ventes' : 'achats',
+          journal: isBanque ? 'banque' : (isEntree ? 'ventes' : 'achats'),
         };
         const record = await createAccountingEntry(data);
         created.push(record);
       }
       setEntries((prev) => [...created, ...prev]);
-      pushToast(`${created.length} operation(s) du cahier journal enregistree(s) dans le journal de caisse.`);
+      pushToast(`${created.length} operation(s) enregistree(s) dans le journal ${isBanque ? 'de banque (releve importe)' : 'de caisse'}.`);
       setCahierCandidates(null);
     } catch (err) {
       pushToast((err as Error).message || "Impossible d'enregistrer certaines operations.", 'error');

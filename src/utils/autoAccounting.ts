@@ -27,6 +27,7 @@ export const COMPTE = {
   BANQUE: '5211', // Banque (compte principal)
   CAISSE: '5711', // Caisse
   ATTENTE: '471', // Comptes d'attente (mouvement bancaire a reclasser)
+  SALAIRE: '661', // Remuneration directe versee au personnel national (charge)
 };
 
 // Compte de tresorerie selon le mode de reglement.
@@ -152,32 +153,46 @@ export function entryForPayment(inv: InvoiceLike, payment: PaymentLike): Generat
   };
 }
 
-// Detecte si un document importe est une vente ou un achat (heuristique simple).
+// Signaux propres au modele de facture officiel VPNS (son propre en-tete,
+// son propre numero de facture "NN/DG/VPNS/AAAA", sa mention "DOIT :").
+const OWN_INVOICE_SIGNALS = /\b(vpns|p2018110005078220)\b|cg\s*\/?\s*bzv\s*\/?\s*18\s*a\s*23443|\/\s*dg\s*\/\s*vpns\s*\/|\bdoit\s*:/;
+
+// Detecte si un document importe est une vente (facture que VPNS emet) ou un
+// achat (piece recue = depense). Un document photographie/importe est presque
+// toujours une piece RECUE (facture fournisseur, recu, ticket de caisse...),
+// pas une facture qu'on redige soi-meme - celles-ci se creent directement dans
+// l'app, pas par import. On ne classe donc en "vente" que si le document porte
+// les signes propres au modele VPNS ; sinon, par defaut, c'est une depense.
 export function detectInvoiceType(text: string): 'vente' | 'achat' {
   const t = text.toLowerCase();
-  if (/\b(facture d'achat|bon de commande|fournisseur|achat|nous vous devons|a payer)\b/.test(t)) {
-    return 'achat';
-  }
-  return 'vente';
+  if (OWN_INVOICE_SIGNALS.test(t)) return 'vente';
+  return 'achat';
 }
 
-export type DocumentKind = 'vente' | 'achat' | 'virement_bancaire' | 'versement' | 'retrait';
+export type DocumentKind = 'vente' | 'achat' | 'virement_bancaire' | 'versement' | 'retrait' | 'fiche_paye' | 'releve_bancaire';
 
-// Classification plus large pour l'import de documents : un bordereau de
-// virement/versement/retrait/releve bancaire n'est pas une facture et doit
-// etre comptabilise directement en tresorerie plutot que force dans le
-// circuit facture. Versement/retrait sont verifies avant le cas general
-// "virement" (mots distincts, mais on privilegie la classification la plus
-// precise quand plusieurs mots-cles apparaissent sur le meme document).
+// Classification plus large pour l'import de documents : une fiche de paye
+// est une charge de personnel (pas une facture), un releve bancaire liste
+// PLUSIEURS operations (traite comme le cahier journal, pas comme un
+// virement unique), et un bordereau de virement/versement/retrait est un
+// mouvement de tresorerie direct. Versement/retrait/fiche de paye/releve sont
+// verifies avant le cas general "virement" (mots distincts, mais on privilegie
+// la classification la plus precise quand plusieurs mots-cles apparaissent).
 export function detectDocumentKind(text: string): DocumentKind {
   const t = text.toLowerCase();
+  if (/\b(fiche de paie|fiche de paye|bulletin de paie|bulletin de paye|bulletin de salaire|salaire net|salaire brut)\b/.test(t)) {
+    return 'fiche_paye';
+  }
+  if (/\b(releve bancaire|relev[ée] bancaire|relev[ée] de compte|releve de compte)\b/.test(t)) {
+    return 'releve_bancaire';
+  }
   if (/\b(bordereau de versement|versement especes|depot especes|depot de fonds)\b/.test(t)) {
     return 'versement';
   }
   if (/\b(bordereau de retrait|retrait especes|retrait de fonds)\b/.test(t)) {
     return 'retrait';
   }
-  if (/\b(bordereau de virement|virement bancaire|ordre de virement|releve bancaire|relev[ée] de compte|swift|iban)\b/.test(t)) {
+  if (/\b(bordereau de virement|virement bancaire|ordre de virement|swift|iban)\b/.test(t)) {
     return 'virement_bancaire';
   }
   return detectInvoiceType(text);
@@ -254,6 +269,22 @@ export function entryForCaisseBanqueTransfer(
     amount: montant,
     category: 'tresorerie',
     journal: 'banque',
+    reference: data.reference,
+  };
+}
+
+// Fiche de paye importee : ce n'est pas une facture, c'est une charge de
+// personnel. Debit 661 (remuneration) / credit tresorerie (mode de paiement),
+// pour le montant net verse - entierement automatique comme le reste.
+export function entryForFichePaye(data: { date: string; amount: number; method: string; description: string; reference?: string }): GeneratedEntry {
+  return {
+    date: data.date,
+    description: data.description,
+    debitAccount: COMPTE.SALAIRE,
+    creditAccount: compteTresorerie(data.method),
+    amount: round2(data.amount),
+    category: 'salaire',
+    journal: 'od',
     reference: data.reference,
   };
 }
