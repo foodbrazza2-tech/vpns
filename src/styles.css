@@ -597,6 +597,10 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
 @keyframes typingBounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-4px); opacity: 1; } }
 .btn-spinner { display: inline-block; width: 13px; height: 13px; border-radius: 50%; border: 2px solid rgba(128,128,128,0.3); border-top-color: currentColor; animation: spin 700ms linear infinite; margin-right: 7px; vertical-align: -2px; }
 .assistant-empty { color: var(--muted); font-size: 0.85rem; text-align: center; padding: 30px 16px; line-height: 1.6; }
+.assistant-suggestions { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 16px; }
+.assistant-suggestions button { border: 1px solid rgba(79,70,229,0.3); background: rgba(79,70,229,0.06); color: var(--primary-dark); border-radius: 999px; padding: 7px 13px; font-size: 0.78rem; font-weight: 600; cursor: pointer; transition: background 140ms ease; }
+.assistant-suggestions button:hover { background: rgba(79,70,229,0.14); }
+.assistant-suggestions button:disabled { opacity: 0.5; cursor: not-allowed; }
 .assistant-input-row { display: flex; align-items: flex-end; gap: 8px; padding: 12px; border-top: 1px solid var(--border); background: white; flex-shrink: 0; }
 .assistant-input-row textarea { flex: 1; resize: none; max-height: 90px; border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px; font-size: 0.88rem; font-family: inherit; }
 .assistant-input-row textarea:focus { outline: 2px solid rgba(79,70,229,0.25); border-color: var(--primary); }

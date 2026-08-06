@@ -361,9 +361,12 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
       <div className="assistant-messages">
         {messages.length === 0 && (
           <div className="assistant-empty">
-            Demande-moi de rediger une facture, d'enregistrer une depense, d'ajouter un client, de prendre un rendez-vous, ou pose-moi une question sur ta compta. Tu peux aussi joindre une photo ou un PDF (facture reçue, ticket, fiche de paye) - je le lis directement.
-            <br /><br />
-            Ex : « Facture Cartouche Market, 150 000 FCFA HT, prestation conseil » ou « Combien me doivent mes clients ? »
+            Demande-moi de rediger une facture, d'enregistrer une depense, d'ajouter un client, de prendre un rendez-vous, ou pose-moi une question sur ta compta. Tu peux aussi joindre une photo ou un PDF (facture reçue, ticket, fiche de paye, releve bancaire) - je le lis directement.
+            <div className="assistant-suggestions">
+              {['Qui me doit de l\'argent ?', 'Resume du mois', 'Factures en retard'].map((q) => (
+                <button key={q} type="button" onClick={() => handleSend(q)} disabled={isSending}>{q}</button>
+              ))}
+            </div>
           </div>
         )}
         {messages.map((m) => (
