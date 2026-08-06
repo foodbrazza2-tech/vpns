@@ -594,7 +594,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
 .assistant-input-row { display: flex; align-items: flex-end; gap: 8px; padding: 12px; border-top: 1px solid var(--border); background: white; flex-shrink: 0; }
 .assistant-input-row textarea { flex: 1; resize: none; max-height: 90px; border: 1px solid var(--border); border-radius: 14px; padding: 10px 12px; font-size: 0.88rem; font-family: inherit; }
 .assistant-input-row textarea:focus { outline: 2px solid rgba(79,70,229,0.25); border-color: var(--primary); }
-.assistant-mic-btn, .assistant-send-btn { border: 0; border-radius: 12px; width: 40px; height: 40px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; }
+.assistant-mic-btn, .assistant-send-btn, .assistant-attach-btn { border: 0; border-radius: 12px; width: 40px; height: 40px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 16px; cursor: pointer; }
+.assistant-attach-btn { background: var(--surface-soft); color: var(--text); border: 1px solid var(--border); }
+.assistant-attach-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.assistant-attachment-chip { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 0 12px 10px; padding: 6px 10px; background: rgba(79,70,229,0.08); border: 1px solid rgba(79,70,229,0.25); border-radius: 10px; font-size: 0.8rem; color: var(--primary-dark); }
+.assistant-attachment-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.assistant-attachment-chip button { border: 0; background: transparent; color: var(--primary-dark); font-size: 15px; cursor: pointer; line-height: 1; flex-shrink: 0; }
 .assistant-mic-btn { background: var(--surface-soft); color: var(--text); border: 1px solid var(--border); }
 .assistant-mic-btn.listening { background: #ef4444; color: white; border-color: #ef4444; animation: pulse 1.2s ease infinite; }
 .assistant-send-btn { background: var(--primary); color: white; }

@@ -12,16 +12,22 @@ export type AssistantResponse =
   | { type: 'action'; name: string; args: Record<string, unknown> }
   | { type: 'error'; error: string };
 
+export interface AssistantAttachment {
+  mimeType: string;
+  data: string; // base64, sans le prefixe data:...;base64,
+}
+
 export async function askAssistant(
   message: string,
   history: AssistantChatTurn[],
-  context: string
+  context: string,
+  attachment?: AssistantAttachment
 ): Promise<AssistantResponse> {
   try {
     const res = await fetch('/api/assistant', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, history, context }),
+      body: JSON.stringify({ message, history, context, attachment: attachment || null }),
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {

@@ -6,7 +6,7 @@ import type { AccountingEntryData } from './AccountingEntryModal';
 import type { EventData } from './EventModal';
 import { askAssistant, type AssistantChatTurn } from '../services/assistantService';
 import { parseQuickEntry } from '../utils/helpers';
-import { COMPTE } from '../utils/autoAccounting';
+import { COMPTE, entryForFichePaye } from '../utils/autoAccounting';
 import { formatFcfa, todayIso, addDaysIso } from '../utils/format';
 
 interface AssistantPanelProps {
@@ -23,6 +23,27 @@ interface DisplayMessage {
   id: string;
   role: 'user' | 'model' | 'error' | 'action';
   text: string;
+}
+
+interface PendingAttachment {
+  name: string;
+  mimeType: string;
+  data: string; // base64, sans le prefixe data:...;base64,
+}
+
+const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024; // limite du corps de requete Vercel
+const ACCEPTED_ATTACHMENT_TYPES = ['image/', 'application/pdf'];
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.split(',')[1] || '');
+    };
+    reader.onerror = () => reject(new Error('Lecture du fichier impossible.'));
+    reader.readAsDataURL(file);
+  });
 }
 
 // Speech recognition n'est pas dans le lib DOM standard de TypeScript - type
@@ -86,8 +107,10 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
   const [isListening, setIsListening] = useState(false);
+  const [attachment, setAttachment] = useState<PendingAttachment | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const historyRef = useRef<AssistantChatTurn[]>([]);
 
   useEffect(() => {
@@ -141,7 +164,33 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
         });
         const clientLabel = str(args.clientName);
         const clientNote = client ? '' : clientLabel ? ` (client "${clientLabel}" introuvable - facture creee sans fiche client liee, a rattacher manuellement)` : '';
-        return `Facture ${invoice.invoiceNumber} creee et comptabilisee : ${formatFcfa(amount)} TTC${clientNote}.`;
+
+        // "il l'a fait et me l'envoie" : le PDF part tout de suite, meme
+        // template que le reste de l'app - un echec de generation ne doit
+        // pas remettre en cause la facture, deja bien enregistree.
+        let pdfNote = '';
+        try {
+          const { exportInvoiceToPdf } = await import('../utils/pdfExport');
+          exportInvoiceToPdf(invoice, client);
+          pdfNote = ' Le PDF vient de partir en telechargement.';
+        } catch {
+          pdfNote = ' (le PDF n\'a pas pu etre genere automatiquement - utilise le bouton telecharger dans Factures).';
+        }
+
+        return `Facture ${invoice.invoiceNumber} creee et comptabilisee : ${formatFcfa(amount)} TTC${clientNote}.${pdfNote}`;
+      }
+      case 'record_payslip': {
+        const amount = num(args.amount);
+        const method = args.method === 'virement' ? 'virement' : 'especes';
+        const description = str(args.description) || 'Salaire';
+        const generated = entryForFichePaye({
+          date: str(args.date) || todayIso(),
+          amount,
+          method,
+          description,
+        });
+        const entry = await onRecordExpense(generated);
+        return `Fiche de paye enregistree en charge de personnel (661) : ${formatFcfa(amount)} (${entry.description}).`;
       }
       case 'record_expense': {
         const amount = num(args.amount);
@@ -179,18 +228,44 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
     }
   }
 
+  const handleAttachFile = async (file: File | undefined) => {
+    if (!file) return;
+    if (!ACCEPTED_ATTACHMENT_TYPES.some((t) => file.type.startsWith(t))) {
+      addMessage('error', 'Seules les images et les PDF sont acceptes.');
+      return;
+    }
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      addMessage('error', `"${file.name}" est trop volumineux (max 4 Mo).`);
+      return;
+    }
+    try {
+      const data = await readFileAsBase64(file);
+      setAttachment({ name: file.name, mimeType: file.type, data });
+    } catch {
+      addMessage('error', `Impossible de lire "${file.name}".`);
+    }
+  };
+
   const handleSend = async (textOverride?: string) => {
     const text = (textOverride ?? inputText).trim();
-    if (!text || isSending) return;
+    const currentAttachment = attachment;
+    if ((!text && !currentAttachment) || isSending) return;
 
-    addMessage('user', text);
-    historyRef.current = [...historyRef.current, { role: 'user' as const, text }].slice(-16);
+    const displayText = text || `📎 ${currentAttachment!.name}`;
+    addMessage('user', displayText);
+    historyRef.current = [...historyRef.current, { role: 'user' as const, text: displayText }].slice(-16);
     setInputText('');
+    setAttachment(null);
     setIsSending(true);
 
     try {
       const context = buildContext(clients, invoices);
-      const response = await askAssistant(text, historyRef.current.slice(0, -1), context);
+      const response = await askAssistant(
+        text || 'Voici un document a analyser.',
+        historyRef.current.slice(0, -1),
+        context,
+        currentAttachment ? { mimeType: currentAttachment.mimeType, data: currentAttachment.data } : undefined
+      );
 
       if (response.type === 'error') {
         addMessage('error', response.error);
@@ -260,7 +335,7 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
       <div className="assistant-messages">
         {messages.length === 0 && (
           <div className="assistant-empty">
-            Demande-moi de rediger une facture, d'enregistrer une depense, d'ajouter un client, de prendre un rendez-vous, ou pose-moi une question sur ta compta.
+            Demande-moi de rediger une facture, d'enregistrer une depense, d'ajouter un client, de prendre un rendez-vous, ou pose-moi une question sur ta compta. Tu peux aussi joindre une photo ou un PDF (facture reçue, ticket, fiche de paye) - je le lis directement.
             <br /><br />
             Ex : « Facture Cartouche Market, 150 000 FCFA HT, prestation conseil » ou « Combien me doivent mes clients ? »
           </div>
@@ -272,7 +347,34 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
         <div ref={messagesEndRef} />
       </div>
 
+      {attachment && (
+        <div className="assistant-attachment-chip">
+          <span>📎 {attachment.name}</span>
+          <button type="button" onClick={() => setAttachment(null)} aria-label="Retirer la piece jointe">×</button>
+        </div>
+      )}
+
       <div className="assistant-input-row">
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*,application/pdf"
+          style={{ display: 'none' }}
+          onChange={(e) => {
+            handleAttachFile(e.target.files?.[0]);
+            e.target.value = '';
+          }}
+        />
+        <button
+          type="button"
+          className="assistant-attach-btn"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isSending}
+          title="Joindre une photo ou un PDF"
+          aria-label="Joindre une photo ou un PDF"
+        >
+          📎
+        </button>
         <textarea
           value={inputText}
           onChange={(e) => setInputText(e.target.value)}
@@ -296,7 +398,7 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
         >
           {isListening ? '⏹' : '🎤'}
         </button>
-        <button type="button" className="assistant-send-btn" onClick={() => handleSend()} disabled={isSending || !inputText.trim()} title="Envoyer" aria-label="Envoyer">
+        <button type="button" className="assistant-send-btn" onClick={() => handleSend()} disabled={isSending || (!inputText.trim() && !attachment)} title="Envoyer" aria-label="Envoyer">
           ➤
         </button>
       </div>

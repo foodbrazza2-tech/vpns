@@ -92,6 +92,20 @@ const TOOLS = [
           required: ['title', 'date'],
         },
       },
+      {
+        name: 'record_payslip',
+        description: "Enregistre une fiche de paye (bulletin de salaire) en charge de personnel - PAS une facture.",
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            amount: { type: 'NUMBER', description: 'Montant net paye en FCFA' },
+            description: { type: 'STRING', description: 'Ex: Salaire juin 2026 - nom employe' },
+            method: { type: 'STRING', enum: ['especes', 'virement'] },
+            date: { type: 'STRING', description: "AAAA-MM-JJ, aujourd'hui par defaut" },
+          },
+          required: ['amount', 'description'],
+        },
+      },
     ],
   },
 ];
@@ -110,7 +124,7 @@ export default async function handler(req: Request): Promise<Response> {
     return jsonResponse({ error: "L'assistant n'est pas configure (cle API manquante cote serveur)." }, 500);
   }
 
-  let body: { message?: string; history?: ChatTurn[]; context?: string };
+  let body: { message?: string; history?: ChatTurn[]; context?: string; attachment?: { mimeType?: string; data?: string } | null };
   try {
     body = await req.json();
   } catch {
@@ -120,8 +134,12 @@ export default async function handler(req: Request): Promise<Response> {
   const message = typeof body.message === 'string' ? body.message.trim() : '';
   const history = Array.isArray(body.history) ? body.history : [];
   const context = typeof body.context === 'string' ? body.context : '';
+  const attachment =
+    body.attachment && typeof body.attachment.mimeType === 'string' && typeof body.attachment.data === 'string'
+      ? { mimeType: body.attachment.mimeType, data: body.attachment.data }
+      : null;
 
-  if (!message) {
+  if (!message && !attachment) {
     return jsonResponse({ error: 'Message vide.' }, 400);
   }
 
@@ -132,7 +150,14 @@ export default async function handler(req: Request): Promise<Response> {
       {
         text: `Tu es l'assistant comptable integre de VPNS Consulting, un cabinet de conseil a Brazzaville (Congo), qui applique la comptabilite SYSCOHADA/OHADA en FCFA avec une TVA a 18%. Tu aides Edson (le gerant) a gerer sa comptabilite au quotidien directement depuis l'application : rediger des factures, enregistrer des depenses, gerer ses clients, planifier des rendez-vous, et repondre a ses questions sur ses propres donnees.
 
-Reponds toujours en francais, de maniere concise et directe (pas de formules de politesse superflues). Quand la demande correspond a une action concrete (facture, client, depense, rendez-vous), appelle directement l'outil correspondant plutot que de decrire ce qu'il faudrait faire - Edson veut de l'efficacite, pas des instructions a suivre lui-meme. S'il manque une information essentielle qui ne peut pas etre deduite raisonnablement du contexte (ex: montant d'une facture), pose une question precise au lieu d'inventer un chiffre. Pour toute question qui ne demande pas d'action (soldes, liste de clients, conseils), reponds simplement en texte en te basant sur le contexte fourni.
+Reponds toujours en francais, de maniere concise et directe (pas de formules de politesse superflues). Quand la demande correspond a une action concrete (facture, client, depense, rendez-vous, fiche de paye), appelle directement l'outil correspondant plutot que de decrire ce qu'il faudrait faire - Edson veut de l'efficacite, pas des instructions a suivre lui-meme. S'il manque une information essentielle qui ne peut pas etre deduite raisonnablement du contexte (ex: montant d'une facture), pose une question precise au lieu d'inventer un chiffre. Pour toute question qui ne demande pas d'action (soldes, liste de clients, conseils), reponds simplement en texte en te basant sur le contexte fourni.
+
+TU PEUX RECEVOIR DES PHOTOS/SCANS/PDF DE DOCUMENTS directement dans la conversation (facture recue, ticket de caisse, fiche de paye, carte de visite...). Lis-les toi-meme comme un comptable le ferait et agis en consequence, sans qu'Edson ait besoin de retaper quoi que ce soit :
+- Un document photographie/importe est presque TOUJOURS une piece RECUE (une depense), jamais une facture qu'Edson redige lui-meme - celles-ci se creent directement en discutant avec toi, pas en les photographiant. Un document au format "facture" d'une autre entreprise doit etre enregistre comme type='achat' (create_invoice) ou record_expense, PAS comme une vente.
+- Ne classe un document en vente (type='vente') QUE s'il porte les signes propres au modele VPNS lui-meme : son propre en-tete "VPNS", un numero de facture au format "NN/DG/VPNS/AAAA", ou son NIU/RCCM. Dans ce cas, c'est probablement une facture qu'Edson a deja emise et qu'il reimporte - verifie qu'elle n'est pas deja dans les factures recentes du contexte avant de la recreer en double.
+- Une fiche de paye/bulletin de salaire : utilise record_payslip, jamais create_invoice.
+- Une carte de visite ou un contact : utilise create_client si Edson veut l'ajouter.
+- Si le document est illisible ou ambigu, dis-le et demande une precision plutot que d'inventer un montant.
 
 Contexte actuel de l'entreprise (clients, factures recentes, soldes) :
 ${context || 'Aucune donnee chargee.'}
@@ -142,11 +167,18 @@ Date du jour a Brazzaville : ${todayLocal}.`,
     ],
   };
 
+  const lastUserParts: Array<{ text?: string; inlineData?: { mimeType: string; data: string } }> = [
+    { text: message || 'Analyse ce document et agis en consequence.' },
+  ];
+  if (attachment) {
+    lastUserParts.push({ inlineData: { mimeType: attachment.mimeType, data: attachment.data } });
+  }
+
   const contents = [
     ...history
       .filter((h) => h && typeof h.text === 'string' && (h.role === 'user' || h.role === 'model'))
       .map((h) => ({ role: h.role, parts: [{ text: h.text }] })),
-    { role: 'user', parts: [{ text: message }] },
+    { role: 'user', parts: lastUserParts },
   ];
 
   let geminiRes: Response;
