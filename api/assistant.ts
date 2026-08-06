@@ -106,6 +106,31 @@ const TOOLS = [
           required: ['amount', 'description'],
         },
       },
+      {
+        name: 'import_bank_statement',
+        description:
+          "Un releve bancaire ou un cahier journal contient PLUSIEURS operations (pas une seule) - extrait-les TOUTES dans ce seul appel plutot que d'en traiter une par une. Les operations sont presentees a Edson pour validation rapide avant enregistrement (jamais postees directement, une erreur sur un releve entier serait couteuse a corriger).",
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            transactions: {
+              type: 'ARRAY',
+              description: 'Une entree par ligne/operation du releve, dans l\'ordre du document',
+              items: {
+                type: 'OBJECT',
+                properties: {
+                  date: { type: 'STRING', description: 'AAAA-MM-JJ' },
+                  description: { type: 'STRING', description: 'Libelle de l\'operation' },
+                  amount: { type: 'NUMBER', description: 'Montant en FCFA, toujours positif' },
+                  sens: { type: 'STRING', enum: ['entree', 'sortie'], description: 'entree = credit du compte (encaissement), sortie = debit (decaissement)' },
+                },
+                required: ['date', 'description', 'amount', 'sens'],
+              },
+            },
+          },
+          required: ['transactions'],
+        },
+      },
     ],
   },
 ];
@@ -156,6 +181,7 @@ TU PEUX RECEVOIR DES PHOTOS/SCANS/PDF DE DOCUMENTS directement dans la conversat
 - Un document photographie/importe est presque TOUJOURS une piece RECUE (une depense), jamais une facture qu'Edson redige lui-meme - celles-ci se creent directement en discutant avec toi, pas en les photographiant. Un document au format "facture" d'une autre entreprise doit etre enregistre comme type='achat' (create_invoice) ou record_expense, PAS comme une vente.
 - Ne classe un document en vente (type='vente') QUE s'il porte les signes propres au modele VPNS lui-meme : son propre en-tete "VPNS", un numero de facture au format "NN/DG/VPNS/AAAA", ou son NIU/RCCM. Dans ce cas, c'est probablement une facture qu'Edson a deja emise et qu'il reimporte - verifie qu'elle n'est pas deja dans les factures recentes du contexte avant de la recreer en double.
 - Une fiche de paye/bulletin de salaire : utilise record_payslip, jamais create_invoice.
+- Un releve bancaire ou une photo de cahier journal papier (PLUSIEURS operations listees) : utilise import_bank_statement avec toutes les lignes extraites en une seule fois, jamais create_invoice/record_expense ligne par ligne.
 - Une carte de visite ou un contact : utilise create_client si Edson veut l'ajouter.
 - Si le document est illisible ou ambigu, dis-le et demande une precision plutot que d'inventer un montant.
 

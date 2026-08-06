@@ -573,6 +573,14 @@ function App() {
     return record;
   };
 
+  // Releve bancaire lu par l'assistant depuis une photo : meme fenetre de
+  // revue que le reste de l'app (aucune ecriture n'est postee sans que Edson
+  // ait un coup d'oeil dessus - plusieurs operations a la fois valent bien ca).
+  const handleAssistantImportBankStatement = (candidates: CandidateCaisseOperation[]) => {
+    setCahierTresorerieAccount(COMPTE.BANQUE);
+    setCahierCandidates(candidates);
+  };
+
   const handleDeleteEvent = async (event: EventRecord) => {
     if (!window.confirm(`Supprimer l'evenement "${event.title}" ?`)) return;
     try {
@@ -1207,7 +1215,7 @@ function App() {
                 <div className="panel-top-actions">
                   <span>{invoicesForExercise.length} facture(s)</span>
                   <label className="file-import-label" title="Facture, recu ou bordereau de virement bancaire (image, PDF ou texte) - transcription et comptabilisation automatiques">
-                    {isImportingInvoice ? 'Analyse OCR en cours...' : 'Importer un document'}
+                    {isImportingInvoice ? (<><span className="btn-spinner" />Analyse OCR en cours...</>) : 'Importer un document'}
                     <input
                       type="file"
                       className="file-import-input"
@@ -1663,6 +1671,7 @@ function App() {
         onCreateInvoice={handleAssistantCreateInvoice}
         onRecordExpense={handleAssistantRecordExpense}
         onCreateAppointment={handleAssistantCreateAppointment}
+        onImportBankStatement={handleAssistantImportBankStatement}
       />
     </div>
   );

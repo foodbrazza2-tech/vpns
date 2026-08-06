@@ -8,6 +8,7 @@ import { askAssistant, type AssistantChatTurn } from '../services/assistantServi
 import { parseQuickEntry } from '../utils/helpers';
 import { COMPTE, entryForFichePaye } from '../utils/autoAccounting';
 import { formatFcfa, todayIso, addDaysIso } from '../utils/format';
+import type { CandidateCaisseOperation } from '../utils/cahierJournalParser';
 
 interface AssistantPanelProps {
   clients: ClientRecord[];
@@ -17,6 +18,7 @@ interface AssistantPanelProps {
   onCreateInvoice: (data: InvoiceData) => Promise<InvoiceRecord>;
   onRecordExpense: (data: AccountingEntryData) => Promise<EntryRecord>;
   onCreateAppointment: (data: EventData) => Promise<EventRecord>;
+  onImportBankStatement: (candidates: CandidateCaisseOperation[]) => void;
 }
 
 interface DisplayMessage {
@@ -101,7 +103,7 @@ function buildContext(clients: ClientRecord[], invoices: InvoiceRecord[]): strin
   return `CLIENTS (${clients.length} au total, ${clients.length > 50 ? '50 premiers affiches' : 'tous affiches'}) :\n${clientLines}\n\nFACTURES RECENTES :\n${recentInvoices}\n\nCREANCES CLIENTS IMPAYEES : ${formatFcfa(totalImpaye)} sur ${impayes.length} facture(s).`;
 }
 
-export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvoice, onRecordExpense, onCreateAppointment }: AssistantPanelProps) {
+export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvoice, onRecordExpense, onCreateAppointment, onImportBankStatement }: AssistantPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -207,6 +209,30 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
           journal: 'achats',
         });
         return `Depense enregistree : ${formatFcfa(amount)} (${entry.description}).`;
+      }
+      case 'import_bank_statement': {
+        const rawTransactions = Array.isArray(args.transactions) ? args.transactions : [];
+        const candidates: CandidateCaisseOperation[] = rawTransactions
+          .map((t): CandidateCaisseOperation | null => {
+            const tx = t as Record<string, unknown>;
+            const amount = num(tx.amount);
+            if (amount <= 0) return null;
+            const description = str(tx.description) || 'Operation bancaire';
+            return {
+              lineRaw: description,
+              date: str(tx.date) || todayIso(),
+              description,
+              amount,
+              sens: tx.sens === 'sortie' ? 'sortie' : tx.sens === 'entree' ? 'entree' : 'inconnu',
+            };
+          })
+          .filter((c): c is CandidateCaisseOperation => c !== null);
+
+        if (candidates.length === 0) {
+          return "Aucune operation exploitable n'a ete trouvee sur ce releve - la photo est peut-etre trop floue.";
+        }
+        onImportBankStatement(candidates);
+        return `${candidates.length} operation(s) detectee(s) sur le releve - verifie-les dans la fenetre qui vient de s'ouvrir avant de les enregistrer (journal Banque).`;
       }
       case 'create_appointment': {
         const client = matchClient(str(args.clientName), clients);
@@ -343,7 +369,12 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
         {messages.map((m) => (
           <div key={m.id} className={`assistant-message ${m.role}`}>{m.text}</div>
         ))}
-        {isSending && <div className="assistant-typing">L'assistant reflechit…</div>}
+        {isSending && (
+          <div className="assistant-typing">
+            <span className="typing-dots"><span /><span /><span /></span>
+            L'assistant reflechit…
+          </div>
+        )}
         <div ref={messagesEndRef} />
       </div>
 

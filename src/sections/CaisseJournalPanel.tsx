@@ -70,7 +70,7 @@ export function CaisseJournalPanel({
           <div className="panel-top-actions">
             <span>{journal.jours.length} jour(s) mouvemente(s)</span>
             <label className="file-import-label" title="Photo d'un cahier journal papier : chaque ligne avec un montant sera proposee comme operation de caisse a valider">
-              {isImportingCahier ? 'Analyse OCR en cours...' : 'Importer un cahier journal (photo)'}
+              {isImportingCahier ? (<><span className="btn-spinner" />Analyse OCR en cours...</>) : 'Importer un cahier journal (photo)'}
               <input
                 type="file"
                 className="file-import-input"
