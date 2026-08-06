@@ -22,3 +22,18 @@ export const formatDate = (value: string) => {
 // Extrait l'annee depuis une chaine yyyy-mm-dd sans passer par Date() (evite les
 // decalages de fuseau horaire pres du 1er janvier).
 export const yearOf = (value: string) => Number(value.slice(0, 4));
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+// Date au format AAAA-MM-JJ lue en heure LOCALE (jamais via toISOString(), qui
+// convertit en UTC et decale la date d'un jour pres de minuit pour un fuseau
+// en avance sur UTC - le cas du Congo-Brazzaville, UTC+1).
+export const toIsoDate = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+
+export const todayIso = () => toIsoDate(new Date());
+
+export const addDaysIso = (dateStr: string, days: number) => {
+  const d = new Date(`${dateStr}T00:00:00`);
+  d.setDate(d.getDate() + days);
+  return toIsoDate(d);
+};

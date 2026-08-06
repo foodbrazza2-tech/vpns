@@ -22,6 +22,7 @@ import { makeId, formatFcfa, formatDate, yearOf } from './utils/format';
 import { paginate, DEFAULT_PAGE_SIZE } from './utils/pagination';
 import { Pagination } from './components/Pagination';
 import { HelpHint, resetAllHints } from './components/HelpHint';
+import { AssistantPanel } from './components/AssistantPanel';
 import { ClientsSection } from './sections/ClientsSection';
 import { AgendaSection } from './sections/AgendaSection';
 import { RapportsSection } from './sections/RapportsSection';
@@ -541,6 +542,35 @@ function App() {
     } catch (err) {
       pushToast((err as Error).message, 'error');
     }
+  };
+
+  // Chemins dedies a l'assistant comptable : memes fonctions de service que le
+  // reste de l'app (donc RLS/comptabilisation auto identiques), mais sans
+  // toucher l'etat des modales manuelles (editingClient/editingEvent, etc.) -
+  // l'assistant cree toujours du neuf, il n'edite jamais une fiche existante.
+  const handleAssistantCreateClient = async (data: ClientData): Promise<ClientRecord> => {
+    const record = await createClient(data);
+    setClientsList((prev) => [record, ...prev]);
+    return record;
+  };
+
+  const handleAssistantCreateInvoice = async (data: InvoiceData): Promise<InvoiceRecord> => {
+    const { invoice, entries: generated } = await createInvoice(data);
+    setInvoices((prev) => [invoice, ...prev]);
+    setEntries((prev) => [...generated, ...prev]);
+    return invoice;
+  };
+
+  const handleAssistantRecordExpense = async (data: AccountingEntryData): Promise<EntryRecord> => {
+    const record = await createAccountingEntry(data);
+    setEntries((prev) => [record, ...prev]);
+    return record;
+  };
+
+  const handleAssistantCreateAppointment = async (data: EventData): Promise<EventRecord> => {
+    const record = await createEvent(data);
+    setEvents((prev) => [record, ...prev]);
+    return record;
   };
 
   const handleDeleteEvent = async (event: EventRecord) => {
@@ -1624,6 +1654,16 @@ function App() {
           />
         ))}
       </div>
+
+      <AssistantPanel
+        clients={clientsList}
+        invoices={invoices}
+        entries={entries}
+        onCreateClient={handleAssistantCreateClient}
+        onCreateInvoice={handleAssistantCreateInvoice}
+        onRecordExpense={handleAssistantRecordExpense}
+        onCreateAppointment={handleAssistantCreateAppointment}
+      />
     </div>
   );
 }

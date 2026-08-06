@@ -1,3 +1,5 @@
+import { toIsoDate } from './format';
+
 export type ParsedEntry = {
   amount: number | null;
   category: string;
@@ -213,11 +215,6 @@ export async function parseInvoiceFromFile(file: File): Promise<ImportedInvoiceD
   const invoiceDate = detectedDate ? new Date(`${detectedDate}T00:00:00`) : today;
   const due = new Date(invoiceDate);
   due.setDate(due.getDate() + 30);
-  // toISOString() convertit en UTC : pour un fuseau en avance sur UTC (Congo-
-  // Brazzaville = UTC+1), minuit local devient la veille en UTC et decale la
-  // date d'un jour. On relit les composants en heure locale (symetrique avec
-  // le parsing ci-dessus) pour que la date affichee soit bien celle du document.
-  const toIsoDate = (d: Date) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
   return {
     invoiceNumber,
