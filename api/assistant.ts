@@ -77,18 +77,19 @@ const TOOLS = [
       {
         name: 'create_invoice',
         description:
-          "Redige et enregistre une facture, comptabilisee automatiquement dans le bon journal. type='vente' si VPNS facture un client, type='achat' si c'est une depense/facture recue d'un fournisseur.",
+          "Redige et enregistre une facture, comptabilisee automatiquement dans le bon journal. type='vente' si VPNS facture un client, type='achat' si c'est une depense/facture recue d'un fournisseur. Fournis SOIT amountHt SOIT amountTtc selon ce qu'Edson a precise (jamais les deux, jamais a deviner au hasard s'il n'a donne qu'un chiffre sans preciser HT/TTC - dans ce cas demande-lui).",
         parameters: {
           type: 'OBJECT',
           properties: {
             clientName: { type: 'STRING', description: 'Nom du client ou fournisseur (recherche approximative dans la liste fournie en contexte)' },
             type: { type: 'STRING', enum: ['vente', 'achat'] },
-            amountHt: { type: 'NUMBER', description: 'Montant hors taxes en FCFA' },
+            amountHt: { type: 'NUMBER', description: 'Montant hors taxes en FCFA, si Edson a precise un montant HT' },
+            amountTtc: { type: 'NUMBER', description: 'Montant toutes taxes comprises en FCFA, si Edson a precise un montant TTC/total' },
             vatRate: { type: 'NUMBER', description: 'Taux de TVA en pourcentage : 18 par defaut, 0 si exonere' },
             description: { type: 'STRING', description: 'Motif / objet de la facture' },
             date: { type: 'STRING', description: "Date au format AAAA-MM-JJ (aujourd'hui par defaut si non precisee)" },
           },
-          required: ['clientName', 'type', 'amountHt', 'description'],
+          required: ['clientName', 'type', 'description'],
         },
       },
       {

@@ -6,6 +6,7 @@ import type { AccountingEntryData } from './AccountingEntryModal';
 import type { EventData } from './EventModal';
 import type { NotificationData } from './NotificationModal';
 import { askAssistant, type AssistantChatTurn } from '../services/assistantService';
+import { listAssistantMessages, saveAssistantMessage, clearAssistantMessages } from '../services/assistantMemoryService';
 import { parseQuickEntry } from '../utils/helpers';
 import { COMPTE, entryForFichePaye } from '../utils/autoAccounting';
 import { formatFcfa, todayIso, addDaysIso } from '../utils/format';
@@ -125,8 +126,29 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
     return () => recognitionRef.current?.stop();
   }, []);
 
+  // Charge la conversation persistee au demarrage - sans ca, l'assistant
+  // "oublierait" tout a chaque rechargement de page, ce qui ne colle pas a
+  // l'idee d'un assistant de poche qui se souvient. Echoue silencieusement
+  // si la table n'existe pas encore (migration pas encore executee) : la
+  // conversation demarre simplement vide, comme avant.
+  useEffect(() => {
+    listAssistantMessages().then((persisted) => {
+      if (persisted.length === 0) return;
+      setMessages(
+        persisted.map((m, i) => ({ id: `hist-${i}`, role: m.role, text: m.content }))
+      );
+      historyRef.current = persisted.map((m) => ({ role: m.role, text: m.content })).slice(-16);
+    });
+  }, []);
+
   const addMessage = (role: DisplayMessage['role'], text: string) => {
     setMessages((prev) => [...prev, { id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`, role, text }]);
+  };
+
+  const handleNewConversation = () => {
+    setMessages([]);
+    historyRef.current = [];
+    clearAssistantMessages();
   };
 
   async function executeAction(name: string, args: Record<string, unknown>): Promise<string> {
@@ -148,10 +170,21 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
       }
       case 'create_invoice': {
         const client = matchClient(str(args.clientName), clients);
-        const amountHt = num(args.amountHt);
         const vatRate = args.vatRate != null ? num(args.vatRate) : 18;
-        const vatAmount = Math.round(amountHt * (vatRate / 100));
-        const amount = amountHt + vatAmount;
+        // Edson pense parfois en HT, parfois en TTC selon comment il le dit -
+        // le tool accepte les deux plutot que de forcer une seule convention.
+        let amountHt: number;
+        let vatAmount: number;
+        let amount: number;
+        if (args.amountTtc != null && args.amountHt == null) {
+          amount = num(args.amountTtc);
+          amountHt = Math.round(amount / (1 + vatRate / 100));
+          vatAmount = amount - amountHt;
+        } else {
+          amountHt = num(args.amountHt);
+          vatAmount = Math.round(amountHt * (vatRate / 100));
+          amount = amountHt + vatAmount;
+        }
         const date = str(args.date) || todayIso();
         const type = args.type === 'achat' ? 'achat' : 'vente';
         const invoice = await onCreateInvoice({
@@ -299,6 +332,7 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
     const displayText = text || `📎 ${currentAttachment!.name}`;
     addMessage('user', displayText);
     historyRef.current = [...historyRef.current, { role: 'user' as const, text: displayText }].slice(-16);
+    saveAssistantMessage('user', displayText);
     setInputText('');
     setAttachment(null);
     setIsSending(true);
@@ -319,12 +353,14 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
           const summary = await executeAction(response.name, response.args);
           addMessage('action', summary);
           historyRef.current = [...historyRef.current, { role: 'model' as const, text: summary }].slice(-16);
+          saveAssistantMessage('model', summary);
         } catch (err) {
           addMessage('error', `Echec de l'action : ${(err as Error).message}`);
         }
       } else {
         addMessage('model', response.text);
         historyRef.current = [...historyRef.current, { role: 'model' as const, text: response.text }].slice(-16);
+        saveAssistantMessage('model', response.text);
       }
     } finally {
       setIsSending(false);
@@ -374,7 +410,12 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
           <h4>Assistant comptable</h4>
           <p>Connait tes clients et tes factures</p>
         </div>
-        <button type="button" className="assistant-close" onClick={() => setIsOpen(false)} aria-label="Fermer">×</button>
+        <div className="assistant-header-actions">
+          {messages.length > 0 && (
+            <button type="button" className="assistant-close" onClick={handleNewConversation} title="Nouvelle conversation" aria-label="Nouvelle conversation">🗑</button>
+          )}
+          <button type="button" className="assistant-close" onClick={() => setIsOpen(false)} aria-label="Fermer">×</button>
+        </div>
       </div>
 
       <div className="assistant-messages">
