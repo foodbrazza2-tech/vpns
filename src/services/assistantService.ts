@@ -2,6 +2,8 @@
 // contexte texte compact (deja en memoire cote app, pas de requete DB
 // supplementaire) a la fonction serveur /api/assistant, qui seule detient la
 // cle de l'API Gemini.
+import { supabase } from './authService';
+
 export interface AssistantChatTurn {
   role: 'user' | 'model';
   text: string;
@@ -24,9 +26,18 @@ export async function askAssistant(
   attachment?: AssistantAttachment
 ): Promise<AssistantResponse> {
   try {
+    // La route serveur revalide elle-meme ce jeton (elle est publique, donc
+    // n'importe qui pourrait sinon l'appeler et consommer le quota Gemini).
+    const {
+      data: { session },
+    } = await supabase.auth.getSession();
+    if (!session?.access_token) {
+      return { type: 'error', error: 'Session expiree - reconnecte-toi.' };
+    }
+
     const res = await fetch('/api/assistant', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}` },
       body: JSON.stringify({ message, history, context, attachment: attachment || null }),
     });
     const data = await res.json().catch(() => null);

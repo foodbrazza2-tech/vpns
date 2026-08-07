@@ -17,6 +17,34 @@ declare const process: { env: Record<string, string | undefined> };
 const GEMINI_MODEL = 'gemini-flash-latest';
 const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
+// Meme identifiant unique autorise que authService.ts cote client - cette
+// route etant publique (n'importe qui connaissant l'URL peut l'appeler), elle
+// doit revalider elle-meme que l'appelant est bien Edson connecte, sinon
+// n'importe qui pourrait consommer le quota Gemini paye sur son compte.
+const ALLOWED_EMAIL = 'edson@gmail.com';
+
+// Verifie le jeton Supabase envoye par le client aupres de l'API Auth de
+// Supabase elle-meme (avec la cle publique anon) - pas besoin de cle secrete
+// service-role pour ca, juste confirmer que le jeton est valide et associe
+// au bon compte.
+async function verifyCaller(authHeader: string | null): Promise<boolean> {
+  if (!authHeader) return false;
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const anonKey = process.env.SUPABASE_ANON_KEY;
+  if (!supabaseUrl || !anonKey) return false;
+
+  try {
+    const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
+      headers: { Authorization: authHeader, apikey: anonKey },
+    });
+    if (!res.ok) return false;
+    const user = await res.json();
+    return typeof user?.email === 'string' && user.email.trim().toLowerCase() === ALLOWED_EMAIL;
+  } catch {
+    return false;
+  }
+}
+
 interface ChatTurn {
   role: 'user' | 'model';
   text: string;
@@ -142,6 +170,15 @@ function jsonResponse(body: unknown, status = 200): Response {
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'Methode non autorisee.' }, 405);
+  }
+
+  // Cette route est publique (n'importe qui connaissant l'URL peut l'appeler) -
+  // elle doit donc revalider elle-meme la session Supabase avant de depenser
+  // le moindre appel Gemini, sinon le quota/la facturation d'Edson seraient a
+  // la merci de n'importe qui.
+  const isAuthorized = await verifyCaller(req.headers.get('authorization'));
+  if (!isAuthorized) {
+    return jsonResponse({ error: 'Non autorise.' }, 401);
   }
 
   const apiKey = process.env.GEMINI_API_KEY;
