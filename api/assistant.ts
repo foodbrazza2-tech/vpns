@@ -159,6 +159,21 @@ const TOOLS = [
           required: ['transactions'],
         },
       },
+      {
+        name: 'create_client_reminder',
+        description:
+          "Planifie une relance client (paiement en retard, suivi commercial...). Utilise le contexte (creances impayees) pour proposer une date et un message pertinents si Edson ne les precise pas.",
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            clientName: { type: 'STRING', description: 'Nom du client a relancer (recherche approximative dans le contexte)' },
+            message: { type: 'STRING', description: 'Contenu de la relance, ex: mentionner le numero de facture et le montant du dans le contexte' },
+            sendDate: { type: 'STRING', description: "AAAA-MM-JJ, aujourd'hui par defaut" },
+            priority: { type: 'STRING', enum: ['low', 'medium', 'high'], description: 'high par defaut pour une creance impayee' },
+          },
+          required: ['clientName', 'message'],
+        },
+      },
     ],
   },
 ];
@@ -210,7 +225,9 @@ export default async function handler(req: Request): Promise<Response> {
   const systemInstruction = {
     parts: [
       {
-        text: `Tu es l'assistant comptable integre de VPNS Consulting, un cabinet de conseil a Brazzaville (Congo), qui applique la comptabilite SYSCOHADA/OHADA en FCFA avec une TVA a 18%. Tu aides Edson (le gerant) a gerer sa comptabilite au quotidien directement depuis l'application : rediger des factures, enregistrer des depenses, gerer ses clients, planifier des rendez-vous, et repondre a ses questions sur ses propres donnees.
+        text: `Tu es l'assistant comptable integre de VPNS Consulting, un cabinet de conseil a Brazzaville (Congo), qui applique la comptabilite SYSCOHADA/OHADA en FCFA avec une TVA a 18%. Tu aides Edson (le gerant) a gerer sa comptabilite au quotidien directement depuis l'application : rediger des factures, enregistrer des depenses, gerer ses clients, planifier des rendez-vous, relancer les clients en retard de paiement, et repondre a ses questions sur ses propres donnees.
+
+Quand Edson demande de "relancer" un client ou parle de creances impayees, utilise create_client_reminder - regarde les CREANCES CLIENTS IMPAYEES et FACTURES RECENTES du contexte pour rediger un message de relance precis (numero de facture, montant, delai) plutot qu'un message generique.
 
 Reponds toujours en francais, de maniere concise et directe (pas de formules de politesse superflues). Quand la demande correspond a une action concrete (facture, client, depense, rendez-vous, fiche de paye), appelle directement l'outil correspondant plutot que de decrire ce qu'il faudrait faire - Edson veut de l'efficacite, pas des instructions a suivre lui-meme. S'il manque une information essentielle qui ne peut pas etre deduite raisonnablement du contexte (ex: montant d'une facture), pose une question precise au lieu d'inventer un chiffre. Pour toute question qui ne demande pas d'action (soldes, liste de clients, conseils), reponds simplement en texte en te basant sur le contexte fourni.
 

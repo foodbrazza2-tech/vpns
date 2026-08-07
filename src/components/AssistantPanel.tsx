@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ClientRecord, InvoiceRecord, EntryRecord, EventRecord } from '../services/businessDataService';
+import type { ClientRecord, InvoiceRecord, EntryRecord, EventRecord, NotificationRecord } from '../services/businessDataService';
 import type { ClientData } from './ClientModal';
 import type { InvoiceData } from './InvoiceModal';
 import type { AccountingEntryData } from './AccountingEntryModal';
 import type { EventData } from './EventModal';
+import type { NotificationData } from './NotificationModal';
 import { askAssistant, type AssistantChatTurn } from '../services/assistantService';
 import { parseQuickEntry } from '../utils/helpers';
 import { COMPTE, entryForFichePaye } from '../utils/autoAccounting';
@@ -19,6 +20,7 @@ interface AssistantPanelProps {
   onRecordExpense: (data: AccountingEntryData) => Promise<EntryRecord>;
   onCreateAppointment: (data: EventData) => Promise<EventRecord>;
   onImportBankStatement: (candidates: CandidateCaisseOperation[]) => void;
+  onCreateReminder: (data: NotificationData) => Promise<NotificationRecord>;
 }
 
 interface DisplayMessage {
@@ -103,7 +105,7 @@ function buildContext(clients: ClientRecord[], invoices: InvoiceRecord[]): strin
   return `CLIENTS (${clients.length} au total, ${clients.length > 50 ? '50 premiers affiches' : 'tous affiches'}) :\n${clientLines}\n\nFACTURES RECENTES :\n${recentInvoices}\n\nCREANCES CLIENTS IMPAYEES : ${formatFcfa(totalImpaye)} sur ${impayes.length} facture(s).`;
 }
 
-export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvoice, onRecordExpense, onCreateAppointment, onImportBankStatement }: AssistantPanelProps) {
+export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvoice, onRecordExpense, onCreateAppointment, onImportBankStatement, onCreateReminder }: AssistantPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -249,6 +251,23 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
         });
         return `Rendez-vous "${event.title}" planifie le ${event.date} a ${event.time}.`;
       }
+      case 'create_client_reminder': {
+        const client = matchClient(str(args.clientName), clients);
+        const priority = ['low', 'medium', 'high'].includes(str(args.priority)) ? (args.priority as 'low' | 'medium' | 'high') : 'high';
+        const record = await onCreateReminder({
+          title: `Relance - ${str(args.clientName) || client?.name || 'Client'}`,
+          message: str(args.message) || 'Relance de paiement.',
+          type: 'reminder',
+          priority,
+          sendDate: str(args.sendDate) || todayIso(),
+          sendTime: '09:00',
+          clientId: client?.id,
+          recurring: false,
+        });
+        const clientLabel = str(args.clientName);
+        const clientNote = client ? '' : clientLabel ? ` (client "${clientLabel}" introuvable - relance creee sans fiche liee)` : '';
+        return `Relance "${record.title}" planifiee le ${record.sendDate}${clientNote}.`;
+      }
       default:
         return `Action non reconnue : ${name}.`;
     }
@@ -361,9 +380,9 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
       <div className="assistant-messages">
         {messages.length === 0 && (
           <div className="assistant-empty">
-            Demande-moi de rediger une facture, d'enregistrer une depense, d'ajouter un client, de prendre un rendez-vous, ou pose-moi une question sur ta compta. Tu peux aussi joindre une photo ou un PDF (facture reçue, ticket, fiche de paye, releve bancaire) - je le lis directement.
+            Demande-moi de rediger une facture, d'enregistrer une depense, d'ajouter un client, de prendre un rendez-vous, de relancer un client en retard de paiement, ou pose-moi une question sur ta compta. Tu peux aussi joindre une photo ou un PDF (facture reçue, ticket, fiche de paye, releve bancaire) - je le lis directement.
             <div className="assistant-suggestions">
-              {['Qui me doit de l\'argent ?', 'Resume du mois', 'Factures en retard'].map((q) => (
+              {['Qui me doit de l\'argent ?', 'Resume du mois', 'Relance les impayes'].map((q) => (
                 <button key={q} type="button" onClick={() => handleSend(q)} disabled={isSending}>{q}</button>
               ))}
             </div>

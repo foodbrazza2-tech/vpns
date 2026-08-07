@@ -581,6 +581,12 @@ function App() {
     setCahierCandidates(candidates);
   };
 
+  const handleAssistantCreateReminder = async (data: NotificationData): Promise<NotificationRecord> => {
+    const record = await createNotification(data);
+    setNotifications((prev) => [record, ...prev]);
+    return record;
+  };
+
   const handleDeleteEvent = async (event: EventRecord) => {
     if (!window.confirm(`Supprimer l'evenement "${event.title}" ?`)) return;
     try {
@@ -1672,6 +1678,7 @@ function App() {
         onRecordExpense={handleAssistantRecordExpense}
         onCreateAppointment={handleAssistantCreateAppointment}
         onImportBankStatement={handleAssistantImportBankStatement}
+        onCreateReminder={handleAssistantCreateReminder}
       />
     </div>
   );
