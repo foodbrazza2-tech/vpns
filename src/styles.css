@@ -58,7 +58,8 @@ button, input, select, textarea { font: inherit; }
    background: #fff;
    color: #1e293b;
    border-radius: 12px;
-   padding: 10px 12px;
+   padding: 11px 14px;
+   min-height: 44px;
    cursor: pointer;
    transition: background 160ms ease, transform 160ms ease;
 }
@@ -192,9 +193,9 @@ button, input, select, textarea { font: inherit; }
 .mini-card p { margin: 4px 0; color: var(--muted); }
 .mini-card span { color: var(--primary); font-size: 0.82rem; font-weight: 600; }
 .upload-box { border: 1px dashed #818cf8; background: #eef2ff; color: var(--primary-dark); border-radius: 14px; padding: 14px; text-align: center; margin-bottom: 12px; }
-.table-scroll { overflow-x: auto; max-width: 100%; }
-table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 0.92rem; }
-th, td { text-align: left; padding: 10px 6px; border-bottom: 1px solid var(--border); }
+.table-scroll { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
+table { width: 100%; min-width: 560px; border-collapse: collapse; font-size: 0.98rem; }
+th, td { text-align: left; padding: 13px 8px; border-bottom: 1px solid var(--border); }
 input, select, textarea { width: 100%; margin: 8px 0 10px; padding: 10px 12px; border: 1px solid #dbe4f0; border-radius: 12px; background: white; color: var(--text); }
 input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229, 0.16); border-color: #818cf8; }
 .parsed-box { background: var(--surface-soft); border-radius: 14px; padding: 12px; color: #334155; display: flex; flex-direction: column; gap: 6px; }
@@ -234,42 +235,43 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
   .hero-sub { font-size: 0.85rem; margin: 0 0 8px; max-width: 100%; line-height: 1.4; }
   .hero-score-block { display: none; }
   .hero-badge-row { gap: 5px; }
-  .status-badge { padding: 4px 8px; font-size: 0.68rem; }
+  .status-badge { padding: 5px 9px; font-size: 0.76rem; }
   .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
   .kpi-card { padding: 16px 14px 12px; }
   .kpi-icon { font-size: 1.1rem; margin-bottom: 2px; }
-  .kpi-label { font-size: 0.7rem; }
-  .kpi-value { font-size: 1.3rem; }
-  .kpi-sub { font-size: 0.65rem; }
+  .kpi-label { font-size: 0.8rem; }
+  .kpi-value { font-size: 1.35rem; }
+  .kpi-sub { font-size: 0.76rem; }
   .kpi-progress { margin-top: 6px; height: 2px; }
   .finance-overview { padding: 14px; margin-top: 10px; }
   .finance-kpi-row { grid-template-columns: 1fr; gap: 8px; margin-top: 10px; }
   .fkpi { gap: 4px; }
-  .fkpi span { font-size: 0.75rem; }
-  .fkpi strong { font-size: 0.9rem; }
+  .fkpi span { font-size: 0.8rem; }
+  .fkpi strong { font-size: 0.95rem; }
   .content-grid { grid-template-columns: 1fr; gap: 14px; }
   .skpi-row { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
   .skpi-card { padding: 10px 12px; gap: 8px; }
   .skpi-icon { width: 34px; height: 34px; font-size: 0.9rem; }
-  .skpi-card p { font-size: 0.7rem; }
-  .skpi-card strong { font-size: 0.9rem; }
+  .skpi-card p { font-size: 0.8rem; }
+  .skpi-card strong { font-size: 0.95rem; }
   .setting-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .mini-card { padding: 10px 12px; border-radius: 12px; }
-  .mini-card p { font-size: 0.78rem; margin: 3px 0; }
+  .mini-card p { font-size: 0.82rem; margin: 3px 0; }
   .panel-card { padding: 16px; border-radius: 16px; }
   .panel-top { margin-bottom: 8px; gap: 6px; }
-  .panel-top h4 { font-size: 0.9rem; }
-  .panel-top span { font-size: 0.7rem; }
-  .quick-list li, .activity-list li { padding: 8px 0; gap: 8px; font-size: 0.85rem; }
-  .quick-list strong, .activity-list strong { font-size: 0.85rem; }
-  .quick-list span, .activity-list span { font-size: 0.75rem; }
-  .cat-row { grid-template-columns: 70px 1fr 30px; gap: 8px; font-size: 0.8rem; }
-  .cat-pct { font-size: 0.75rem; }
-  .notif-type-row { padding: 8px 10px; font-size: 0.8rem; }
+  .panel-top h4 { font-size: 0.95rem; }
+  .panel-top span { font-size: 0.78rem; }
+  .quick-list li, .activity-list li { padding: 10px 0; gap: 8px; font-size: 0.9rem; min-height: 44px; }
+  .quick-list strong, .activity-list strong { font-size: 0.9rem; }
+  .quick-list span, .activity-list span { font-size: 0.8rem; }
+  .cat-row { grid-template-columns: 70px 1fr 30px; gap: 8px; font-size: 0.85rem; }
+  .cat-pct { font-size: 0.8rem; }
+  .notif-type-row { padding: 10px 10px; font-size: 0.85rem; min-height: 44px; }
   .notif-dot { width: 8px; height: 8px; }
-  table { font-size: 0.8rem; }
-  th, td { padding: 6px 4px; }
-  .chip { padding: 3px 8px; font-size: 0.7rem; }
+  /* Le tableau reste lisible sur mobile : il scrolle horizontalement
+     (.table-scroll) plutot que de retrecir le texte jusqu'a l'illisible. */
+  th, td { padding: 10px 6px; }
+  .chip { padding: 5px 10px; font-size: 0.78rem; }
 }
 @media (max-width: 767px) {
   .topbar { padding: 14px 14px 0; gap: 8px; flex-wrap: wrap; }
@@ -349,9 +351,9 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
 .kpi-card::after { content: ''; position: absolute; bottom: -20px; right: -20px; width: 80px; height: 80px; border-radius: 50%; background: var(--kpi-bg, rgba(79,70,229,0.06)); }
 .kpi-icon { font-size: 1.5rem; margin-bottom: 4px; }
 .kpi-body { flex: 1; }
-.kpi-label { margin: 0; font-size: 0.82rem; color: var(--muted); }
+.kpi-label { margin: 0; font-size: 0.87rem; color: var(--muted); }
 .kpi-value { display: block; font-size: 1.8rem; font-weight: 800; color: var(--text); line-height: 1.1; }
-.kpi-sub { font-size: 0.76rem; color: var(--muted); }
+.kpi-sub { font-size: 0.82rem; color: var(--muted); }
 .kpi-progress { height: 3px; background: var(--border); border-radius: 999px; margin-top: 8px; overflow: hidden; }
 .kpi-fill { height: 100%; background: var(--kpi-color, var(--primary)); border-radius: 999px; transition: width 800ms ease; }
 
@@ -374,7 +376,7 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
 
 /* Onglets comptabilite */
 .tab-bar { display: flex; gap: 6px; overflow-x: auto; padding-bottom: 2px; }
-.tab-btn { flex-shrink: 0; border: 1px solid var(--border); background: white; color: var(--muted); padding: 9px 16px; border-radius: 999px; cursor: pointer; font-weight: 600; font-size: 0.86rem; transition: all 160ms ease; }
+.tab-btn { flex-shrink: 0; border: 1px solid var(--border); background: white; color: var(--muted); padding: 11px 18px; border-radius: 999px; cursor: pointer; font-weight: 600; font-size: 0.92rem; min-height: 44px; transition: all 160ms ease; }
 .tab-btn:hover { background: var(--surface-soft); }
 .tab-btn.active { background: linear-gradient(135deg, var(--primary), #6366f1); color: white; border-color: transparent; }
 .journal-filter { width: auto; margin: 0; padding: 6px 28px 6px 10px; border-radius: 999px; border: 1px solid var(--border); background: white; color: var(--text); font-size: 0.82rem; font-weight: 600; }
@@ -389,8 +391,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
 /* Etats financiers (bilan / compte de resultat) */
 .etats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
 @media (max-width: 640px) { .etats-grid { grid-template-columns: 1fr; gap: 14px; } }
-.etats-col-title { margin: 0 0 8px; font-size: 0.82rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-.etats-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 0.88rem; }
+.etats-col-title { margin: 0 0 8px; font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+.etats-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 9px 0; border-bottom: 1px solid var(--border); font-size: 0.98rem; }
 .etats-row span { color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .etats-row strong { color: var(--text); white-space: nowrap; }
 .etats-row.total { border-top: 2px solid var(--primary); border-bottom: 0; margin-top: 4px; padding-top: 10px; }
@@ -406,14 +408,14 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
 
 .skpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; }
 .skpi-card { background: white; border: 1px solid var(--border); border-radius: 16px; padding: 14px 16px; display: flex; align-items: center; gap: 12px; box-shadow: 0 4px 16px rgba(15,23,42,0.06); }
-.skpi-card p { margin: 0; font-size: 0.8rem; color: var(--muted); }
+.skpi-card p { margin: 0; font-size: 0.86rem; color: var(--muted); }
 .skpi-card strong { display: block; font-size: 1.05rem; font-weight: 700; color: var(--text); margin-top: 1px; }
 .skpi-icon { width: 38px; height: 38px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1rem; flex-shrink: 0; }
 
 /* ═══════════════════════════════════════════
    CHIPS & PROGRESS
 ═══════════════════════════════════════════ */
-.chip { display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px; font-size: 0.75rem; font-weight: 600; }
+.chip { display: inline-flex; align-items: center; padding: 5px 12px; border-radius: 999px; font-size: 0.82rem; font-weight: 600; }
 .chip.neutral { background: rgba(79,70,229,0.08); color: var(--primary); }
 .chip.green { background: rgba(16,185,129,0.12); color: #059669; }
 .chip.blue { background: rgba(59,130,246,0.12); color: #2563eb; }
@@ -439,8 +441,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
 .help-hint-close { border: 0; background: transparent; color: #7c4a03; font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; opacity: 0.7; }
 .help-hint-close:hover { opacity: 1; }
 .panel-top-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-.small-btn { padding: 7px 12px; font-size: 0.8rem; border-radius: 999px; }
-.file-import-label { display: inline-flex; align-items: center; justify-content: center; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--border); background: white; color: #334155; cursor: pointer; font-size: 0.8rem; font-weight: 600; transition: background 160ms ease; }
+.small-btn { padding: 10px 15px; font-size: 0.88rem; border-radius: 999px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
+.file-import-label { display: inline-flex; align-items: center; justify-content: center; padding: 10px 15px; border-radius: 999px; border: 1px solid var(--border); background: white; color: #334155; cursor: pointer; font-size: 0.88rem; font-weight: 600; transition: background 160ms ease; min-height: 40px; }
 .file-import-label:hover { background: #f8fafc; }
 .file-import-input { display: none; }
 .progress-track { width: 100%; height: 5px; background: var(--border); border-radius: 999px; overflow: hidden; }
