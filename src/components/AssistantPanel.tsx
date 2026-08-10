@@ -7,6 +7,7 @@ import type { EventData } from './EventModal';
 import type { NotificationData } from './NotificationModal';
 import { askAssistant, type AssistantChatTurn } from '../services/assistantService';
 import { listAssistantMessages, saveAssistantMessage, clearAssistantMessages } from '../services/assistantMemoryService';
+import { searchAll } from '../services/searchService';
 import { parseQuickEntry } from '../utils/helpers';
 import { COMPTE, entryForFichePaye } from '../utils/autoAccounting';
 import { formatFcfa, todayIso, addDaysIso } from '../utils/format';
@@ -301,6 +302,25 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
         const clientNote = client ? '' : clientLabel ? ` (client "${clientLabel}" introuvable - relance creee sans fiche liee)` : '';
         return `Relance "${record.title}" planifiee le ${record.sendDate}${clientNote}.`;
       }
+      case 'search_records': {
+        const query = str(args.query);
+        if (!query) return "Je n'ai pas compris ce qu'il faut chercher.";
+        const results = await searchAll(query);
+        const lines: string[] = [];
+        if (results.clients.length > 0) {
+          lines.push(`Clients :\n${results.clients.map((c) => `- ${c.name}${c.company ? ` (${c.company})` : ''}`).join('\n')}`);
+        }
+        if (results.invoices.length > 0) {
+          lines.push(
+            `Factures :\n${results.invoices.map((i) => `- ${i.invoiceNumber} : ${i.type} ${formatFcfa(i.amount)} - ${i.status} - ${i.date}${i.description ? ` (${i.description})` : ''}`).join('\n')}`
+          );
+        }
+        if (results.entries.length > 0) {
+          lines.push(`Ecritures :\n${results.entries.map((e) => `- ${e.description} : ${formatFcfa(e.amount)} - ${e.date} (${e.category})`).join('\n')}`);
+        }
+        if (lines.length === 0) return `Aucun resultat pour "${query}".`;
+        return `Resultats pour "${query}" :\n\n${lines.join('\n\n')}`;
+      }
       default:
         return `Action non reconnue : ${name}.`;
     }
@@ -351,7 +371,9 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
       } else if (response.type === 'action') {
         try {
           const summary = await executeAction(response.name, response.args);
-          addMessage('action', summary);
+          // search_records est une lecture, pas une creation - pas la bulle
+          // verte "succes" utilisee pour les vraies actions.
+          addMessage(response.name === 'search_records' ? 'model' : 'action', summary);
           historyRef.current = [...historyRef.current, { role: 'model' as const, text: summary }].slice(-16);
           saveAssistantMessage('model', summary);
         } catch (err) {

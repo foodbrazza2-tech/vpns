@@ -175,6 +175,18 @@ const TOOLS = [
           required: ['clientName', 'message'],
         },
       },
+      {
+        name: 'search_records',
+        description:
+          "Cherche dans TOUT l'historique (clients, factures, ecritures comptables) au-dela des quelques elements recents deja fournis dans le contexte. Utilise ceci quand Edson demande de retrouver quelque chose d'ancien ou de precis que le contexte ne couvre pas deja (ex: 'la facture de Cartouche Market en mars', 'quand ai-je paye EEC la derniere fois').",
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            query: { type: 'STRING', description: 'Termes de recherche : nom de client, mot du libelle, numero de facture...' },
+          },
+          required: ['query'],
+        },
+      },
     ],
   },
 ];
@@ -229,6 +241,8 @@ export default async function handler(req: Request): Promise<Response> {
         text: `Tu es l'assistant comptable integre de VPNS Consulting, un cabinet de conseil a Brazzaville (Congo), qui applique la comptabilite SYSCOHADA/OHADA en FCFA avec une TVA a 18%. Tu aides Edson (le gerant) a gerer sa comptabilite au quotidien directement depuis l'application : rediger des factures, enregistrer des depenses, gerer ses clients, planifier des rendez-vous, relancer les clients en retard de paiement, et repondre a ses questions sur ses propres donnees.
 
 Quand Edson demande de "relancer" un client ou parle de creances impayees, utilise create_client_reminder - regarde les CREANCES CLIENTS IMPAYEES et FACTURES RECENTES du contexte pour rediger un message de relance precis (numero de facture, montant, delai) plutot qu'un message generique.
+
+Le contexte ne contient que les elements RECENTS (50 derniers clients, 15 dernieres factures). Si Edson demande de retrouver quelque chose de plus ancien ou de precis qui n'y figure pas (une facture d'il y a plusieurs mois, un client qu'on ne voit pas dans la liste...), utilise search_records au lieu de repondre "je ne trouve pas" ou d'inventer.
 
 Reponds toujours en francais, de maniere concise et directe (pas de formules de politesse superflues). Quand la demande correspond a une action concrete (facture, client, depense, rendez-vous, fiche de paye), appelle directement l'outil correspondant plutot que de decrire ce qu'il faudrait faire - Edson veut de l'efficacite, pas des instructions a suivre lui-meme. S'il manque une information essentielle qui ne peut pas etre deduite raisonnablement du contexte (ex: montant d'une facture), pose une question precise au lieu d'inventer un chiffre. Pour toute question qui ne demande pas d'action (soldes, liste de clients, conseils), reponds simplement en texte en te basant sur le contexte fourni.
 
