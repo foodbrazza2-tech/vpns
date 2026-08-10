@@ -34,7 +34,6 @@ button, input, select, textarea { font: inherit; }
 .sidebar-head { display: flex; justify-content: space-between; align-items: center; }
 .sidebar-close { border: 0; background: rgba(255,255,255,0.12); color: white; width: 36px; height: 36px; border-radius: 10px; cursor: pointer; font-size: 18px; line-height: 1; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 160ms ease; padding: 0; }
 .sidebar-close:hover { background: rgba(255,255,255,0.22); }
-@media (max-width: 767px) { .sidebar { width: min(300px, 84vw); min-width: unset; z-index: 50; transform: translateX(-100%); visibility: hidden; box-shadow: 24px 0 70px rgba(15, 23, 42, 0.24); } .sidebar.open { transform: translateX(0); visibility: visible; } .app-content { margin-left: 0 !important; } }
 @media (min-width: 768px) { .menu-toggle { display: none; } .sidebar-close { display: none; } }
 .drawer-overlay { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.56); opacity: 0; visibility: hidden; transition: opacity 220ms ease, visibility 220ms ease; z-index: 45; backdrop-filter: blur(3px); }
 .drawer-overlay.open { opacity: 1; visibility: visible; }
@@ -212,13 +211,18 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
 @keyframes fadeIn { from { opacity: 0; transform: scale(0.97); } to { opacity: 1; transform: scale(1); } }
 @keyframes slideUp { from { transform: translateY(60px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 @media (max-width: 767px) {
-  .sidebar { width: min(280px, 85vw); min-width: unset; z-index: 50; transform: translateX(-100%); visibility: hidden; box-shadow: 24px 0 70px rgba(15, 23, 42, 0.24); padding: 16px; gap: 20px; }
+  /* Menu mobile volontairement etroit (environ 2/3 de l'ecran, pas plein
+     ecran) : on voit ce qu'il y a derriere, on comprend en un coup d'oeil
+     que c'est un panneau qui se referme, pas une nouvelle page. Items plus
+     grands et mieux espaces (min 56px de haut) pour rester facile a toucher
+     malgre la largeur reduite - pense pour un usage sans hesitation. */
+  .sidebar { width: min(260px, 70vw); min-width: unset; z-index: 50; transform: translateX(-100%); visibility: hidden; box-shadow: 24px 0 70px rgba(15, 23, 42, 0.28); padding: 16px; gap: 20px; border-radius: 0 20px 20px 0; }
   .sidebar.open { transform: translateX(0); visibility: visible; }
   .app-content { margin-left: 0 !important; }
-  .sidebar-close { width: 32px; height: 32px; font-size: 16px; }
-  .nav-list { flex: 1; justify-content: space-evenly; margin-top: 0; gap: 4px; }
-  .nav-item { padding: 15px 16px; gap: 14px; border-radius: 14px; font-size: 1.02rem; }
-  .nav-icon { width: 34px; height: 34px; font-size: 1.05rem; }
+  .sidebar-close { width: 40px; height: 40px; font-size: 18px; }
+  .nav-list { flex: 1; justify-content: space-evenly; margin-top: 0; gap: 6px; overflow-y: auto; }
+  .nav-item { padding: 14px 12px; gap: 12px; border-radius: 14px; font-size: 1rem; min-height: 56px; }
+  .nav-icon { width: 32px; height: 32px; font-size: 1rem; flex-shrink: 0; }
   .sidebar-footer { flex-shrink: 0; }
   .topbar { padding: 10px 14px 0; gap: 12px; }
   .topbar h2 { font-size: 1rem; }
@@ -546,8 +550,12 @@ input:focus, select:focus, textarea:focus { outline: 2px solid rgba(79, 70, 229,
 }
 
 @media (max-width: 920px) {
-  .app-shell { flex-direction: column; }
-  .sidebar { width: 100%; min-width: 0; min-height: auto; height: auto; padding: 20px; }
+  /* .app-shell/.sidebar ne sont plus touches ici : c'etait un reliquat d'une
+     ancienne mise en page (sidebar empilee en haut de page) qui entrait en
+     conflit avec le tiroir mobile actuel (position fixed, largeur reduite)
+     defini dans le bloc @media (max-width: 767px) plus haut - sur un vrai
+     telephone, cette regle plus generale gagnait la cascade et forcait le
+     menu a occuper 100% de la largeur au lieu du tiroir etroit prevu. */
   .main-panel { padding: 20px; }
   .topbar, .hero-card { flex-direction: column; align-items: flex-start; }
   .inline-list { grid-template-columns: 1fr; }
