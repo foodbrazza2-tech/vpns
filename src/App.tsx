@@ -759,6 +759,46 @@ function App() {
     }
   };
 
+  // Meme logique que handleRecordPayment, sans dependre du modal (l'assistant
+  // fournit deja facture + montant + mode via la conversation).
+  const handleAssistantRecordPayment = async (
+    invoice: InvoiceRecord,
+    amount: number,
+    method: string,
+    paymentDate: string
+  ): Promise<{ newStatus: string }> => {
+    const { payment, entry } = await createPayment(invoice, { amount, paymentDate, method });
+    setPayments((prev) => [payment, ...prev]);
+    if (entry) setEntries((prev) => [entry, ...prev]);
+
+    const totalPaid = [payment, ...payments].filter((p) => p.invoiceId === invoice.id).reduce((s, p) => s + p.amount, 0);
+    let newStatus = invoice.status;
+    if (totalPaid >= invoice.amount) newStatus = 'paid';
+    else if (totalPaid > 0 && invoice.status !== 'overdue') newStatus = 'sent';
+    if (newStatus !== invoice.status) {
+      await updateInvoiceStatus(invoice.id, newStatus);
+      setInvoices((prev) => prev.map((i) => (i.id === invoice.id ? { ...i, status: newStatus } : i)));
+    }
+    return { newStatus };
+  };
+
+  // Meme logique que handleCancelInvoice, sans le window.confirm() - l'assistant
+  // agit directement (comme le reste de ses outils), mais garde le meme garde-fou :
+  // impossible d'annuler une facture deja payee, meme partiellement.
+  const handleAssistantCancelInvoice = async (invoice: InvoiceRecord): Promise<void> => {
+    const alreadyPaid = payments.filter((p) => p.invoiceId === invoice.id).reduce((s, p) => s + p.amount, 0);
+    if (alreadyPaid > 0) {
+      throw new Error(`un paiement de ${formatFcfa(alreadyPaid)} est deja enregistre sur cette facture`);
+    }
+    const linkedEntries = entries.filter((e) => e.sourceType === 'invoice' && e.sourceId === invoice.id && !e.reversed);
+    for (const entry of linkedEntries) {
+      const { reversal, original } = await reverseAccountingEntry(entry);
+      setEntries((prev) => [reversal, ...prev.map((e) => (e.id === original.id ? original : e))]);
+    }
+    await updateInvoiceStatus(invoice.id, 'cancelled');
+    setInvoices((prev) => prev.map((i) => (i.id === invoice.id ? { ...i, status: 'cancelled' } : i)));
+  };
+
   // Exercice comptable SYSCOHADA/OHADA : annee civile (1er janvier - 31 decembre).
   // Les ecritures et factures sont filtrees par exercice selectionne pour que la
   // comptabilite, les factures et les rapports restent cloisonnes annee par annee.
@@ -1679,6 +1719,8 @@ function App() {
         onCreateAppointment={handleAssistantCreateAppointment}
         onImportBankStatement={handleAssistantImportBankStatement}
         onCreateReminder={handleAssistantCreateReminder}
+        onRecordPayment={handleAssistantRecordPayment}
+        onCancelInvoice={handleAssistantCancelInvoice}
       />
     </div>
   );

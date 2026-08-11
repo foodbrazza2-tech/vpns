@@ -23,6 +23,8 @@ interface AssistantPanelProps {
   onCreateAppointment: (data: EventData) => Promise<EventRecord>;
   onImportBankStatement: (candidates: CandidateCaisseOperation[]) => void;
   onCreateReminder: (data: NotificationData) => Promise<NotificationRecord>;
+  onRecordPayment: (invoice: InvoiceRecord, amount: number, method: string, paymentDate: string) => Promise<{ newStatus: string }>;
+  onCancelInvoice: (invoice: InvoiceRecord) => Promise<void>;
 }
 
 interface DisplayMessage {
@@ -52,25 +54,22 @@ function readFileAsBase64(file: File): Promise<string> {
   });
 }
 
-// Speech recognition n'est pas dans le lib DOM standard de TypeScript - type
-// minimal pour l'API vocale du navigateur (Chrome/Edge : webkitSpeechRecognition).
-interface SpeechRecognitionLike {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
-  onerror: (() => void) | null;
-  onend: (() => void) | null;
-  start: () => void;
-  stop: () => void;
+function blobToBase64(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(',')[1] || '');
+    reader.onerror = () => reject(new Error('Lecture audio impossible.'));
+    reader.readAsDataURL(blob);
+  });
 }
 
-function getSpeechRecognitionCtor(): (new () => SpeechRecognitionLike) | null {
-  const w = window as unknown as {
-    SpeechRecognition?: new () => SpeechRecognitionLike;
-    webkitSpeechRecognition?: new () => SpeechRecognitionLike;
-  };
-  return w.SpeechRecognition || w.webkitSpeechRecognition || null;
+// Le premier format supporte par le navigateur pour MediaRecorder - Gemini
+// comprend l'audio nativement (transcription + comprehension en un seul appel),
+// bien plus fiable que la reconnaissance vocale du navigateur (SpeechRecognition)
+// utilisee avant, qui captait mal le vocabulaire metier (noms de clients, FCFA...).
+function pickRecordingMimeType(): string {
+  const candidates = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
+  return candidates.find((t) => typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(t)) || '';
 }
 
 function matchClient(query: string | undefined, clients: ClientRecord[]): ClientRecord | undefined {
@@ -80,6 +79,25 @@ function matchClient(query: string | undefined, clients: ClientRecord[]): Client
   return clients.find(
     (c) => c.name.toLowerCase().includes(q) || (c.company && c.company.toLowerCase().includes(q)) || q.includes(c.name.toLowerCase())
   );
+}
+
+// Retrouve une facture par numero (partiel) ou, a defaut, la plus ancienne
+// facture de vente impayee du client cite - c'est la plus probable quand
+// Edson dit juste "la facture de tel client" sans donner le numero.
+function matchInvoice(invoiceNumber: string | undefined, clientName: string | undefined, invoices: InvoiceRecord[], clients: ClientRecord[]): InvoiceRecord | undefined {
+  const num = (invoiceNumber || '').toLowerCase().trim();
+  if (num) {
+    const found = invoices.find((i) => i.invoiceNumber.toLowerCase().includes(num));
+    if (found) return found;
+  }
+  const client = matchClient(clientName, clients);
+  if (client) {
+    const unpaid = invoices
+      .filter((i) => i.clientId === client.id && i.type === 'vente' && i.status !== 'cancelled')
+      .sort((a, b) => (a.status === 'paid' ? 1 : 0) - (b.status === 'paid' ? 1 : 0) || a.date.localeCompare(b.date));
+    if (unpaid.length > 0) return unpaid[0];
+  }
+  return undefined;
 }
 
 // Contexte compact envoye a chaque message : assez pour que l'assistant
@@ -107,15 +125,16 @@ function buildContext(clients: ClientRecord[], invoices: InvoiceRecord[]): strin
   return `CLIENTS (${clients.length} au total, ${clients.length > 50 ? '50 premiers affiches' : 'tous affiches'}) :\n${clientLines}\n\nFACTURES RECENTES :\n${recentInvoices}\n\nCREANCES CLIENTS IMPAYEES : ${formatFcfa(totalImpaye)} sur ${impayes.length} facture(s).`;
 }
 
-export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvoice, onRecordExpense, onCreateAppointment, onImportBankStatement, onCreateReminder }: AssistantPanelProps) {
+export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvoice, onRecordExpense, onCreateAppointment, onImportBankStatement, onCreateReminder, onRecordPayment, onCancelInvoice }: AssistantPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [inputText, setInputText] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const [isListening, setIsListening] = useState(false);
+  const [isRecording, setIsRecording] = useState(false);
   const [attachment, setAttachment] = useState<PendingAttachment | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const historyRef = useRef<AssistantChatTurn[]>([]);
 
@@ -124,7 +143,9 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
   }, [messages, isSending]);
 
   useEffect(() => {
-    return () => recognitionRef.current?.stop();
+    return () => {
+      if (mediaRecorderRef.current?.state === 'recording') mediaRecorderRef.current.stop();
+    };
   }, []);
 
   // Charge la conversation persistee au demarrage - sans ca, l'assistant
@@ -321,6 +342,29 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
         if (lines.length === 0) return `Aucun resultat pour "${query}".`;
         return `Resultats pour "${query}" :\n\n${lines.join('\n\n')}`;
       }
+      case 'record_payment': {
+        const invoice = matchInvoice(str(args.invoiceNumber), str(args.clientName), invoices, clients);
+        if (!invoice) return "Je n'ai pas trouve la facture correspondante - precise le numero ou le nom du client.";
+        const amount = num(args.amount) || invoice.amount;
+        const validMethods = ['especes', 'virement', 'cheque', 'mobile_money'];
+        const method = validMethods.includes(str(args.method)) ? str(args.method) : 'especes';
+        try {
+          const { newStatus } = await onRecordPayment(invoice, amount, method, str(args.date) || todayIso());
+          return `Paiement de ${formatFcfa(amount)} enregistre sur la facture ${invoice.invoiceNumber}${newStatus === 'paid' ? ' - facture soldee.' : ' (paiement partiel, facture toujours en cours).'}`;
+        } catch (err) {
+          return `Echec de l'enregistrement du paiement : ${(err as Error).message}`;
+        }
+      }
+      case 'cancel_invoice': {
+        const invoice = matchInvoice(str(args.invoiceNumber), str(args.clientName), invoices, clients);
+        if (!invoice) return "Je n'ai pas trouve la facture a annuler - precise le numero ou le nom du client.";
+        try {
+          await onCancelInvoice(invoice);
+          return `Facture ${invoice.invoiceNumber} annulee et ecritures comptables contre-passees.`;
+        } catch (err) {
+          return `Impossible d'annuler : ${(err as Error).message}`;
+        }
+      }
       default:
         return `Action non reconnue : ${name}.`;
     }
@@ -344,12 +388,13 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
     }
   };
 
-  const handleSend = async (textOverride?: string) => {
+  const handleSend = async (textOverride?: string, attachmentOverride?: PendingAttachment) => {
+    const currentAttachment = attachmentOverride ?? attachment;
     const text = (textOverride ?? inputText).trim();
-    const currentAttachment = attachment;
     if ((!text && !currentAttachment) || isSending) return;
 
-    const displayText = text || `📎 ${currentAttachment!.name}`;
+    const isVoice = currentAttachment?.mimeType.startsWith('audio/');
+    const displayText = text || (isVoice ? '🎤 Message vocal' : `📎 ${currentAttachment!.name}`);
     addMessage('user', displayText);
     historyRef.current = [...historyRef.current, { role: 'user' as const, text: displayText }].slice(-16);
     saveAssistantMessage('user', displayText);
@@ -359,8 +404,9 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
 
     try {
       const context = buildContext(clients, invoices);
+      const defaultText = isVoice ? 'Message vocal - ecoute et agis en consequence.' : 'Voici un document a analyser.';
       const response = await askAssistant(
-        text || 'Voici un document a analyser.',
+        text || defaultText,
         historyRef.current.slice(0, -1),
         context,
         currentAttachment ? { mimeType: currentAttachment.mimeType, data: currentAttachment.data } : undefined
@@ -389,32 +435,48 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
     }
   };
 
-  const handleMicToggle = () => {
-    if (isListening) {
-      recognitionRef.current?.stop();
-      setIsListening(false);
+  // Enregistre un message vocal et l'envoie directement a Gemini comme piece
+  // jointe audio - le modele transcrit et comprend en un seul appel, bien
+  // plus fiable que la reconnaissance vocale du navigateur (qui captait mal
+  // les noms de clients, montants en FCFA, vocabulaire comptable...).
+  const handleMicToggle = async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop();
+      return; // le onstop ci-dessous termine l'envoi
+    }
+    if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getUserMedia) {
+      addMessage('error', "L'enregistrement vocal n'est pas disponible sur ce navigateur - utilise le texte.");
       return;
     }
-    const Ctor = getSpeechRecognitionCtor();
-    if (!Ctor) {
-      addMessage('error', "La dictee vocale n'est pas disponible sur ce navigateur - utilise le texte.");
-      return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mimeType = pickRecordingMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      audioChunksRef.current = [];
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        setIsRecording(false);
+        const blob = new Blob(audioChunksRef.current, { type: recorder.mimeType || mimeType || 'audio/webm' });
+        if (blob.size < 800) {
+          addMessage('error', "Aucun son detecte - reessaie en parlant plus pres du micro.");
+          return;
+        }
+        try {
+          const data = await blobToBase64(blob);
+          await handleSend(undefined, { name: 'message-vocal', mimeType: blob.type || 'audio/webm', data });
+        } catch {
+          addMessage('error', "Impossible d'envoyer le message vocal.");
+        }
+      };
+      mediaRecorderRef.current = recorder;
+      recorder.start();
+      setIsRecording(true);
+    } catch {
+      addMessage('error', "Microphone indisponible ou permission refusee.");
     }
-    const recognition = new Ctor();
-    recognition.lang = 'fr-FR';
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    recognition.onresult = (event) => {
-      const transcript = event.results[0]?.[0]?.transcript;
-      if (transcript) {
-        setInputText(transcript);
-      }
-    };
-    recognition.onerror = () => setIsListening(false);
-    recognition.onend = () => setIsListening(false);
-    recognitionRef.current = recognition;
-    recognition.start();
-    setIsListening(true);
   };
 
   if (!isOpen) {
@@ -443,7 +505,7 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
       <div className="assistant-messages">
         {messages.length === 0 && (
           <div className="assistant-empty">
-            Demande-moi de rediger une facture, d'enregistrer une depense, d'ajouter un client, de prendre un rendez-vous, de relancer un client en retard de paiement, ou pose-moi une question sur ta compta. Tu peux aussi joindre une photo ou un PDF (facture reçue, ticket, fiche de paye, releve bancaire) - je le lis directement.
+            Demande-moi de rediger une facture, d'enregistrer un paiement ou une depense, d'ajouter un client, de prendre un rendez-vous, de relancer un client en retard de paiement, ou pose-moi une question sur ta compta. Tu peux aussi joindre une photo ou un PDF (facture reçue, ticket, fiche de paye, releve bancaire), ou m'envoyer un message vocal directement - je comprends tout ça sans rien retaper.
             <div className="assistant-suggestions">
               {['Qui me doit de l\'argent ?', 'Resume du mois', 'Relance les impayes'].map((q) => (
                 <button key={q} type="button" onClick={() => handleSend(q)} disabled={isSending}>{q}</button>
@@ -500,19 +562,19 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
               handleSend();
             }
           }}
-          placeholder="Ecris ou dicte ta demande…"
+          placeholder="Ecris ta demande, ou appuie sur le micro…"
           rows={1}
           disabled={isSending}
         />
         <button
           type="button"
-          className={`assistant-mic-btn${isListening ? ' listening' : ''}`}
+          className={`assistant-mic-btn${isRecording ? ' listening' : ''}`}
           onClick={handleMicToggle}
           disabled={isSending}
-          title="Dicter vocalement"
-          aria-label="Dicter vocalement"
+          title={isRecording ? 'Arreter et envoyer' : 'Message vocal'}
+          aria-label={isRecording ? 'Arreter et envoyer' : 'Message vocal'}
         >
-          {isListening ? '⏹' : '🎤'}
+          {isRecording ? '⏹' : '🎤'}
         </button>
         <button type="button" className="assistant-send-btn" onClick={() => handleSend()} disabled={isSending || (!inputText.trim() && !attachment)} title="Envoyer" aria-label="Envoyer">
           ➤
