@@ -9,9 +9,14 @@ export interface AssistantChatTurn {
   text: string;
 }
 
+export interface AssistantAction {
+  name: string;
+  args: Record<string, unknown>;
+}
+
 export type AssistantResponse =
   | { type: 'text'; text: string }
-  | { type: 'action'; name: string; args: Record<string, unknown> }
+  | { type: 'action'; actions: AssistantAction[] }
   | { type: 'error'; error: string };
 
 export interface AssistantAttachment {
@@ -44,8 +49,8 @@ export async function askAssistant(
     if (!res.ok) {
       return { type: 'error', error: (data && data.error) || `Erreur serveur (${res.status}).` };
     }
-    if (data?.type === 'action') {
-      return { type: 'action', name: data.name, args: data.args || {} };
+    if (data?.type === 'action' && Array.isArray(data.actions)) {
+      return { type: 'action', actions: data.actions.map((a: any) => ({ name: a.name, args: a.args || {} })) };
     }
     return { type: 'text', text: data?.text || '' };
   } catch (err) {

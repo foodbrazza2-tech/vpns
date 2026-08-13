@@ -573,6 +573,28 @@ function App() {
     return record;
   };
 
+  const handleAssistantUpdateAppointment = async (id: string, data: EventData): Promise<EventRecord> => {
+    const record = await updateEvent(id, data);
+    setEvents((prev) => prev.map((e) => (e.id === record.id ? record : e)));
+    return record;
+  };
+
+  const handleAssistantCancelAppointment = async (id: string): Promise<void> => {
+    await deleteEvent(id);
+    setEvents((prev) => prev.filter((e) => e.id !== id));
+  };
+
+  const handleAssistantUpdateClient = async (id: string, data: ClientData): Promise<ClientRecord> => {
+    const record = await updateClient(id, data);
+    setClientsList((prev) => prev.map((c) => (c.id === record.id ? record : c)));
+    return record;
+  };
+
+  const handleAssistantDeleteClient = async (id: string): Promise<void> => {
+    await deleteClient(id);
+    setClientsList((prev) => prev.filter((c) => c.id !== id));
+  };
+
   // Releve bancaire lu par l'assistant depuis une photo : meme fenetre de
   // revue que le reste de l'app (aucune ecriture n'est postee sans que Edson
   // ait un coup d'oeil dessus - plusieurs operations a la fois valent bien ca).
@@ -1713,10 +1735,15 @@ function App() {
         clients={clientsList}
         invoices={invoices}
         entries={entries}
+        events={events}
         onCreateClient={handleAssistantCreateClient}
+        onUpdateClient={handleAssistantUpdateClient}
+        onDeleteClient={handleAssistantDeleteClient}
         onCreateInvoice={handleAssistantCreateInvoice}
         onRecordExpense={handleAssistantRecordExpense}
         onCreateAppointment={handleAssistantCreateAppointment}
+        onUpdateAppointment={handleAssistantUpdateAppointment}
+        onCancelAppointment={handleAssistantCancelAppointment}
         onImportBankStatement={handleAssistantImportBankStatement}
         onCreateReminder={handleAssistantCreateReminder}
         onRecordPayment={handleAssistantRecordPayment}

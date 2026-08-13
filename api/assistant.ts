@@ -216,6 +216,57 @@ const TOOLS = [
           required: [],
         },
       },
+      {
+        name: 'update_client',
+        description: "Modifie une ou plusieurs informations d'une fiche client existante (telephone, email, adresse...). Ne fournis que les champs qui changent.",
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            clientName: { type: 'STRING', description: 'Nom du client a modifier (recherche approximative)' },
+            name: { type: 'STRING' },
+            company: { type: 'STRING' },
+            email: { type: 'STRING' },
+            phone: { type: 'STRING' },
+            address: { type: 'STRING' },
+            city: { type: 'STRING' },
+            taxId: { type: 'STRING' },
+          },
+          required: ['clientName'],
+        },
+      },
+      {
+        name: 'delete_client',
+        description: 'Supprime une fiche client. Ses factures et ecritures comptables passees restent intactes (juste plus liees a une fiche).',
+        parameters: {
+          type: 'OBJECT',
+          properties: { clientName: { type: 'STRING', description: 'Nom du client a supprimer' } },
+          required: ['clientName'],
+        },
+      },
+      {
+        name: 'update_appointment',
+        description: "Modifie un rendez-vous existant (date, heure, type...) - utilise ceci pour deplacer/reprogrammer un rendez-vous.",
+        parameters: {
+          type: 'OBJECT',
+          properties: {
+            title: { type: 'STRING', description: 'Titre actuel du rendez-vous a retrouver (recherche approximative)' },
+            newTitle: { type: 'STRING', description: 'Nouveau titre, si Edson veut le changer' },
+            date: { type: 'STRING', description: 'Nouvelle date AAAA-MM-JJ' },
+            time: { type: 'STRING', description: 'Nouvelle heure HH:MM' },
+            type: { type: 'STRING', enum: ['meeting', 'call', 'reminder', 'followup'] },
+          },
+          required: ['title'],
+        },
+      },
+      {
+        name: 'cancel_appointment',
+        description: 'Annule/supprime un rendez-vous existant.',
+        parameters: {
+          type: 'OBJECT',
+          properties: { title: { type: 'STRING', description: 'Titre du rendez-vous a annuler (recherche approximative)' } },
+          required: ['title'],
+        },
+      },
     ],
   },
 ];
@@ -267,7 +318,9 @@ export default async function handler(req: Request): Promise<Response> {
   const systemInstruction = {
     parts: [
       {
-        text: `Tu es l'assistant comptable integre de VPNS Consulting, un cabinet de conseil a Brazzaville (Congo), qui applique la comptabilite SYSCOHADA/OHADA en FCFA avec une TVA a 18%. Tu es l'assistant de poche d'Edson (le gerant) pour TOUTE sa comptabilite : rediger des factures, enregistrer des paiements et des depenses, gerer ses clients, annuler une facture, planifier des rendez-vous, relancer les clients en retard de paiement, chercher une donnee ancienne, et repondre a n'importe quelle question sur ses propres donnees. Le but est qu'il n'ait jamais besoin de sortir de cette conversation pour accomplir une tache de gestion - s'il existe un outil pour ce qu'il demande, utilise-le directement au lieu de lui expliquer comment le faire lui-meme.
+        text: `Tu es l'assistant comptable integre de VPNS Consulting, un cabinet de conseil a Brazzaville (Congo), qui applique la comptabilite SYSCOHADA/OHADA en FCFA avec une TVA a 18%. Tu es l'assistant de poche d'Edson (le gerant) pour TOUTE sa gestion, sans exception : rediger/annuler des factures, enregistrer des paiements et des depenses, creer/modifier/supprimer des clients, creer/deplacer/annuler des rendez-vous, relancer les clients en retard de paiement, chercher une donnee ancienne, et repondre a n'importe quelle question sur ses propres donnees. Le but est qu'il n'ait jamais besoin de sortir de cette conversation ni d'aller ailleurs (un autre assistant IA, l'interface manuelle) pour accomplir une tache de gestion - s'il existe un outil pour ce qu'il demande, utilise-le directement au lieu de lui expliquer comment le faire lui-meme.
+
+Pour modifier ou supprimer une fiche client, utilise update_client/delete_client. Pour deplacer ou annuler un rendez-vous existant, utilise update_appointment/cancel_appointment (regarde PROCHAINS RENDEZ-VOUS dans le contexte pour retrouver celui dont Edson parle).
 
 Quand Edson demande de "relancer" un client ou parle de creances impayees, utilise create_client_reminder - regarde les CREANCES CLIENTS IMPAYEES et FACTURES RECENTES du contexte pour rediger un message de relance precis (numero de facture, montant, delai) plutot qu'un message generique.
 
@@ -328,13 +381,16 @@ Date du jour a Brazzaville : ${todayLocal}.`,
   const data = await geminiRes.json();
   const candidate = data?.candidates?.[0];
   const parts: Array<{ text?: string; functionCall?: { name: string; args?: Record<string, unknown> } }> = candidate?.content?.parts || [];
-  const functionCallPart = parts.find((p) => p.functionCall);
+  // Gemini peut renvoyer PLUSIEURS appels d'outils dans une seule reponse
+  // quand Edson demande plusieurs choses en une phrase ("change le telephone
+  // de X et deplace mon rendez-vous avec Y") - executer seulement le premier
+  // en ignorait un silencieusement.
+  const functionCalls = parts.filter((p) => p.functionCall).map((p) => p.functionCall!);
 
-  if (functionCallPart?.functionCall) {
+  if (functionCalls.length > 0) {
     return jsonResponse({
       type: 'action',
-      name: functionCallPart.functionCall.name,
-      args: functionCallPart.functionCall.args || {},
+      actions: functionCalls.map((fc) => ({ name: fc.name, args: fc.args || {} })),
     });
   }
 

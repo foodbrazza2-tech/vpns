@@ -17,10 +17,15 @@ interface AssistantPanelProps {
   clients: ClientRecord[];
   invoices: InvoiceRecord[];
   entries: EntryRecord[];
+  events: EventRecord[];
   onCreateClient: (data: ClientData) => Promise<ClientRecord>;
+  onUpdateClient: (id: string, data: ClientData) => Promise<ClientRecord>;
+  onDeleteClient: (id: string) => Promise<void>;
   onCreateInvoice: (data: InvoiceData) => Promise<InvoiceRecord>;
   onRecordExpense: (data: AccountingEntryData) => Promise<EntryRecord>;
   onCreateAppointment: (data: EventData) => Promise<EventRecord>;
+  onUpdateAppointment: (id: string, data: EventData) => Promise<EventRecord>;
+  onCancelAppointment: (id: string) => Promise<void>;
   onImportBankStatement: (candidates: CandidateCaisseOperation[]) => void;
   onCreateReminder: (data: NotificationData) => Promise<NotificationRecord>;
   onRecordPayment: (invoice: InvoiceRecord, amount: number, method: string, paymentDate: string) => Promise<{ newStatus: string }>;
@@ -100,10 +105,24 @@ function matchInvoice(invoiceNumber: string | undefined, clientName: string | un
   return undefined;
 }
 
+// Retrouve un rendez-vous par titre (recherche approximative) - priorite aux
+// rendez-vous a venir, plus probables que ce dont Edson parle.
+function matchEvent(query: string | undefined, events: EventRecord[]): EventRecord | undefined {
+  if (!query) return undefined;
+  const q = query.toLowerCase().trim();
+  if (!q) return undefined;
+  const matches = events.filter((e) => e.title.toLowerCase().includes(q) || q.includes(e.title.toLowerCase()));
+  if (matches.length === 0) return undefined;
+  const today = todayIso();
+  const upcoming = matches.filter((e) => e.date >= today).sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time));
+  return upcoming[0] || matches[0];
+}
+
 // Contexte compact envoye a chaque message : assez pour que l'assistant
-// connaisse deja les clients et l'etat des factures, sans repasser par une
-// requete DB dediee ni gonfler le payload envoye au modele.
-function buildContext(clients: ClientRecord[], invoices: InvoiceRecord[]): string {
+// connaisse deja les clients, l'etat des factures et les prochains
+// rendez-vous, sans repasser par une requete DB dediee ni gonfler le payload
+// envoye au modele.
+function buildContext(clients: ClientRecord[], invoices: InvoiceRecord[], events: EventRecord[]): string {
   const clientLines =
     clients
       .slice(0, 50)
@@ -122,10 +141,34 @@ function buildContext(clients: ClientRecord[], invoices: InvoiceRecord[]): strin
   const impayes = invoices.filter((i) => i.type === 'vente' && i.status !== 'paid' && i.status !== 'cancelled');
   const totalImpaye = impayes.reduce((s, i) => s + i.amount, 0);
 
-  return `CLIENTS (${clients.length} au total, ${clients.length > 50 ? '50 premiers affiches' : 'tous affiches'}) :\n${clientLines}\n\nFACTURES RECENTES :\n${recentInvoices}\n\nCREANCES CLIENTS IMPAYEES : ${formatFcfa(totalImpaye)} sur ${impayes.length} facture(s).`;
+  const today = todayIso();
+  const upcomingEvents = events
+    .filter((e) => e.date >= today)
+    .sort((a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
+    .slice(0, 10)
+    .map((e) => `- ${e.title} - ${e.date} ${e.time}${e.location ? ` (${e.location})` : ''}`)
+    .join('\n') || 'Aucun rendez-vous a venir.';
+
+  return `CLIENTS (${clients.length} au total, ${clients.length > 50 ? '50 premiers affiches' : 'tous affiches'}) :\n${clientLines}\n\nFACTURES RECENTES :\n${recentInvoices}\n\nCREANCES CLIENTS IMPAYEES : ${formatFcfa(totalImpaye)} sur ${impayes.length} facture(s).\n\nPROCHAINS RENDEZ-VOUS :\n${upcomingEvents}`;
 }
 
-export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvoice, onRecordExpense, onCreateAppointment, onImportBankStatement, onCreateReminder, onRecordPayment, onCancelInvoice }: AssistantPanelProps) {
+export function AssistantPanel({
+  clients,
+  invoices,
+  events,
+  onCreateClient,
+  onUpdateClient,
+  onDeleteClient,
+  onCreateInvoice,
+  onRecordExpense,
+  onCreateAppointment,
+  onUpdateAppointment,
+  onCancelAppointment,
+  onImportBankStatement,
+  onCreateReminder,
+  onRecordPayment,
+  onCancelInvoice,
+}: AssistantPanelProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [inputText, setInputText] = useState('');
@@ -365,6 +408,49 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
           return `Impossible d'annuler : ${(err as Error).message}`;
         }
       }
+      case 'update_client': {
+        const client = matchClient(str(args.clientName), clients);
+        if (!client) return `Client "${str(args.clientName)}" introuvable.`;
+        const record = await onUpdateClient(client.id, {
+          name: str(args.name) || client.name,
+          email: str(args.email) || client.email,
+          phone: str(args.phone) || client.phone,
+          company: str(args.company) || client.company,
+          address: str(args.address) || client.address,
+          city: str(args.city) || client.city,
+          taxId: str(args.taxId) || client.taxId,
+          archiveFolder: client.archiveFolder,
+        });
+        return `Fiche de "${record.name}" mise a jour.`;
+      }
+      case 'delete_client': {
+        const client = matchClient(str(args.clientName), clients);
+        if (!client) return `Client "${str(args.clientName)}" introuvable.`;
+        await onDeleteClient(client.id);
+        return `Client "${client.name}" supprime (ses factures et ecritures passees restent intactes, juste sans fiche liee).`;
+      }
+      case 'update_appointment': {
+        const event = matchEvent(str(args.title), events);
+        if (!event) return `Rendez-vous "${str(args.title)}" introuvable.`;
+        const validTypes = ['meeting', 'call', 'reminder', 'followup'];
+        const record = await onUpdateAppointment(event.id, {
+          title: str(args.newTitle) || event.title,
+          description: event.description,
+          date: str(args.date) || event.date,
+          time: str(args.time) || event.time,
+          duration: event.duration,
+          clientId: event.clientId,
+          location: event.location,
+          type: validTypes.includes(str(args.type)) ? (args.type as EventData['type']) : event.type,
+        });
+        return `Rendez-vous "${record.title}" deplace au ${record.date} a ${record.time}.`;
+      }
+      case 'cancel_appointment': {
+        const event = matchEvent(str(args.title), events);
+        if (!event) return `Rendez-vous "${str(args.title)}" introuvable.`;
+        await onCancelAppointment(event.id);
+        return `Rendez-vous "${event.title}" du ${event.date} annule.`;
+      }
       default:
         return `Action non reconnue : ${name}.`;
     }
@@ -403,7 +489,7 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
     setIsSending(true);
 
     try {
-      const context = buildContext(clients, invoices);
+      const context = buildContext(clients, invoices, events);
       const defaultText = isVoice ? 'Message vocal - ecoute et agis en consequence.' : 'Voici un document a analyser.';
       const response = await askAssistant(
         text || defaultText,
@@ -415,15 +501,20 @@ export function AssistantPanel({ clients, invoices, onCreateClient, onCreateInvo
       if (response.type === 'error') {
         addMessage('error', response.error);
       } else if (response.type === 'action') {
-        try {
-          const summary = await executeAction(response.name, response.args);
-          // search_records est une lecture, pas une creation - pas la bulle
-          // verte "succes" utilisee pour les vraies actions.
-          addMessage(response.name === 'search_records' ? 'model' : 'action', summary);
-          historyRef.current = [...historyRef.current, { role: 'model' as const, text: summary }].slice(-16);
-          saveAssistantMessage('model', summary);
-        } catch (err) {
-          addMessage('error', `Echec de l'action : ${(err as Error).message}`);
+        // Edson peut demander plusieurs choses dans le meme message ("change
+        // le telephone de X et deplace mon rendez-vous avec Y") - Gemini
+        // renvoie alors plusieurs actions, executees ici dans l'ordre.
+        for (const action of response.actions) {
+          try {
+            const summary = await executeAction(action.name, action.args);
+            // search_records est une lecture, pas une creation - pas la bulle
+            // verte "succes" utilisee pour les vraies actions.
+            addMessage(action.name === 'search_records' ? 'model' : 'action', summary);
+            historyRef.current = [...historyRef.current, { role: 'model' as const, text: summary }].slice(-16);
+            saveAssistantMessage('model', summary);
+          } catch (err) {
+            addMessage('error', `Echec de l'action : ${(err as Error).message}`);
+          }
         }
       } else {
         addMessage('model', response.text);
