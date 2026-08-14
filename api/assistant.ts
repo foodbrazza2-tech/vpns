@@ -275,6 +275,58 @@ function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
 }
 
+const GEMINI_TIMEOUT_MS = 20000;
+const GEMINI_MAX_ATTEMPTS = 3;
+
+// Gemini renvoie de temps en temps un 503 "high demand" ou un echec reseau
+// transitoire (observe en conditions reelles, pas hypothetique) - sans retry,
+// Edson devait renvoyer son message a la main a chaque fois. Deux tentatives
+// supplementaires avec un court delai avant d'abandonner pour de bon ; chaque
+// tentative est bornee dans le temps pour ne jamais laisser la conversation
+// bloquee indefiniment sur un appel qui ne repond pas.
+async function callGeminiWithRetry(
+  body: unknown,
+  apiKey: string
+): Promise<{ ok: true; data: any } | { ok: false; error: string }> {
+  let lastError = "Impossible de joindre le service IA.";
+
+  for (let attempt = 1; attempt <= GEMINI_MAX_ATTEMPTS; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), GEMINI_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+
+      if (res.ok) {
+        return { ok: true, data: await res.json() };
+      }
+
+      // 429 (quota) et 4xx (requete invalide) ne se resolvent pas en reessayant
+      // la meme requete - seuls les 5xx (panne cote Gemini, transitoire par
+      // nature) valent la peine d'etre retentes.
+      if (res.status < 500) {
+        const errText = await res.text().catch(() => '');
+        return { ok: false, error: `Erreur du service IA (${res.status}). ${errText.slice(0, 200)}` };
+      }
+      lastError = `Erreur du service IA (${res.status}), plusieurs tentatives ont echoue.`;
+    } catch {
+      clearTimeout(timeout);
+      lastError = "Impossible de joindre le service IA (reseau ou delai depasse).";
+    }
+
+    if (attempt < GEMINI_MAX_ATTEMPTS) {
+      await new Promise((resolve) => setTimeout(resolve, 400 * attempt));
+    }
+  }
+
+  return { ok: false, error: `${lastError} Reessaie dans un instant.` };
+}
+
 export default async function handler(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return jsonResponse({ error: 'Methode non autorisee.' }, 405);
@@ -362,23 +414,12 @@ Date du jour a Brazzaville : ${todayLocal}.`,
     { role: 'user', parts: lastUserParts },
   ];
 
-  let geminiRes: Response;
-  try {
-    geminiRes = await fetch(`${GEMINI_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ contents, systemInstruction, tools: TOOLS }),
-    });
-  } catch {
-    return jsonResponse({ error: "Impossible de joindre le service IA. Reessaie dans un instant." }, 502);
+  const geminiResult = await callGeminiWithRetry({ contents, systemInstruction, tools: TOOLS }, apiKey);
+  if (!geminiResult.ok) {
+    return jsonResponse({ error: geminiResult.error }, 502);
   }
 
-  if (!geminiRes.ok) {
-    const errText = await geminiRes.text().catch(() => '');
-    return jsonResponse({ error: `Erreur du service IA (${geminiRes.status}). ${errText.slice(0, 200)}` }, 502);
-  }
-
-  const data = await geminiRes.json();
+  const data = geminiResult.data;
   const candidate = data?.candidates?.[0];
   const parts: Array<{ text?: string; functionCall?: { name: string; args?: Record<string, unknown> } }> = candidate?.content?.parts || [];
   // Gemini peut renvoyer PLUSIEURS appels d'outils dans une seule reponse
